@@ -247,7 +247,7 @@ npm run build
 ## 10. Common troubleshooting
 
 - **Database connection failed:** verify `TIDB_URL`, TiDB hostname, port `4000`, database/user privileges, URL-encoded credentials, TLS settings, and the exact connection string from the TiDB console.
-- **AI not configured:** set `GROQ_API_KEY` in `backend/.env`, restart Flask, and verify `GROQ_MODEL` is currently available to your Groq account.
+- **AI request failed:** the API returns a specific, safe explanation for invalid credentials, model permissions/IDs, request limits, rate limits, timeouts, and provider outages. On Render, verify `GROQ_API_KEY` and `GROQ_MODEL` in the service environment; match any request ID in the error to the Render service logs. Never paste or share the API key. Transient failures are retried automatically.
 - **Qdrant is unavailable:** check `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION`. Use the admin reindex action after reconnecting.
 - **CORS error:** set `CORS_ORIGINS` to the exact frontend origin including scheme and port, restart Flask, then hard-refresh the browser.
 - **Admin sign-in fails on hosted domains:** verify that the frontend uses its Vercel `/api` path, that `frontend/vercel.json` points to the correct Render service URL, and that Render's `CORS_ORIGINS` contains the exact Vercel production origin.

@@ -1,6 +1,6 @@
 import json
 import re
-from flask import current_app
+from flask import current_app, g
 from groq import Groq
 
 
@@ -8,11 +8,56 @@ class AIServiceError(RuntimeError):
     pass
 
 
+def _provider_error_message(exc):
+    status_code = getattr(exc, "status_code", None)
+    model = current_app.config.get("GROQ_MODEL", "openai/gpt-oss-20b")
+    if status_code == 401:
+        return "Groq authentication failed. Verify GROQ_API_KEY in the Render environment."
+    if status_code == 403:
+        return f"The Groq account is not permitted to use model '{model}'. Verify model access and GROQ_MODEL."
+    if status_code == 404:
+        return f"Groq could not find model '{model}'. Set GROQ_MODEL to an active model available to your account."
+    if status_code == 413:
+        return "The request is too large for Groq. Reduce the prompt size and try again."
+    if status_code == 429:
+        return "Groq rate limit or usage quota reached. Review your account limits or retry after the limit resets."
+    if status_code in {400, 422}:
+        return f"Groq rejected the request for model '{model}'. Check its token limit and support for the requested response format."
+    if isinstance(status_code, int) and status_code >= 500:
+        return "Groq is temporarily unavailable. Please retry shortly."
+
+    error_type = type(exc).__name__
+    if error_type == "APITimeoutError":
+        return "The Groq request timed out. Please retry; if this persists, check Groq availability."
+    if error_type == "APIConnectionError":
+        return "Could not connect to Groq. Check the Render service's outbound connectivity and retry."
+
+    request_id = getattr(g, "request_id", None)
+    if request_id:
+        return f"The AI provider request failed. Check Render logs for request ID {request_id}."
+    return "The AI provider request failed. Check the Render service logs for details."
+
+
+def _log_provider_error(exc, message):
+    request_id = getattr(g, "request_id", "unavailable")
+    model = current_app.config.get("GROQ_MODEL", "openai/gpt-oss-20b")
+    status_code = getattr(exc, "status_code", "unavailable")
+    current_app.logger.exception(
+        "%s (request_id=%s, model=%s, status=%s)",
+        message,
+        request_id,
+        model,
+        status_code,
+    )
+
+
 def _client(timeout=30.0):
     key = current_app.config.get("GROQ_API_KEY", "").strip()
     if not key:
-        raise AIServiceError("AI is not configured yet. Add GROQ_API_KEY to backend/.env and restart Flask.")
-    return Groq(api_key=key, timeout=timeout, max_retries=1)
+        raise AIServiceError(
+            "AI is not configured. Set GROQ_API_KEY in backend/.env for local use or in the Render service environment."
+        )
+    return Groq(api_key=key, timeout=timeout, max_retries=2)
 
 
 def completion(messages, *, temperature=0.1, max_tokens=1800, json_mode=False, timeout=30.0):
@@ -35,9 +80,8 @@ def completion(messages, *, temperature=0.1, max_tokens=1800, json_mode=False, t
     except AIServiceError:
         raise
     except Exception as exc:
-        # Avoid sending provider internals/API details back to public clients.
-        current_app.logger.exception("Groq request failed: %s", exc)
-        raise AIServiceError("The AI service could not complete the request. Check the model/key configuration and try again.") from exc
+        _log_provider_error(exc, "Groq request failed")
+        raise AIServiceError(_provider_error_message(exc)) from exc
 
 
 def completion_stream(messages, *, temperature=0.1, max_tokens=1800, timeout=60.0):
@@ -63,8 +107,8 @@ def completion_stream(messages, *, temperature=0.1, max_tokens=1800, timeout=60.
     except AIServiceError:
         raise
     except Exception as exc:
-        current_app.logger.exception("Groq streaming request failed: %s", exc)
-        raise AIServiceError("The AI service could not complete the request. Check the model/key configuration and try again.") from exc
+        _log_provider_error(exc, "Groq streaming request failed")
+        raise AIServiceError(_provider_error_message(exc)) from exc
 
 
 def json_completion(messages, *, temperature=0.0, max_tokens=2200, timeout=30.0):
