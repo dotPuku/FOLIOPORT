@@ -82,7 +82,6 @@ export default function PublicChat({ theme, setTheme }) {
       updateChat(chat.id, { messages: [...nextMessages, { role: 'assistant', content: responseText ? `${responseText}\n\n${failure}` : failure }] });
     } finally {
       setLoadingChats((prev) => { const next = new Set(prev); next.delete(chat.id); return next; });
-      inputRef.current?.focus();
     }
   };
 
