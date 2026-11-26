@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, BriefcaseBusiness, Check, CheckCircle2, ChevronDown, FileText, LoaderCircle, Moon, Plus, Sparkles, Sun, UploadCloud, X, XCircle } from 'lucide-react';
 import { api } from '../api';
 import Toast, { ToastStack } from '../components/Toast';
+import useScrollHeader from '../useScrollHeader';
 
 const pct = (n) => `${Math.max(0, Math.min(100, Number(n) || 0))}%`;
 const statusLabel = { matched: 'Matched', related: 'Related evidence', unmatched: 'Gap' };
@@ -36,6 +37,7 @@ export default function JobMatcher({ theme, setTheme }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const fileInput = useRef(null);
+  const headerVisible = useScrollHeader();
 
   const reset = () => { setResult(null); setDescription(''); setFile(null); setError(''); if (fileInput.current) fileInput.current.value = ''; };
 
@@ -55,7 +57,7 @@ export default function JobMatcher({ theme, setTheme }) {
   };
 
   return <div className="matcher-page">
-    <header className="matcher-topbar">
+    <header className={`matcher-topbar sticky-page-header scroll-aware-header ${headerVisible ? '' : 'scroll-aware-header-hidden'}`}>
       <div className="matcher-brand"><Link className="brand-lockup" to="/"><span className="brand-mark">f.</span><span>folioport</span></Link><span className="brand-divider" /><span className="page-crumb">Job matcher</span></div>
       <div className="matcher-actions"><Link to="/" className="back-to-chat"><ArrowLeft size={15} /> AI portfolio</Link><button className="icon-button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label="Toggle theme">{theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}</button></div>
     </header>

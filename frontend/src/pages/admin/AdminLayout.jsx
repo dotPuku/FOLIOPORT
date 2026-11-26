@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { BriefcaseBusiness, Code2, GraduationCap, LogOut, Menu, Moon, RefreshCw, Sun, UserRound, Zap } from 'lucide-react';
 import { api, clearAuth, setCsrfToken } from '../../api';
 import Toast, { ToastStack } from '../../components/Toast';
+import useScrollHeader from '../../useScrollHeader';
 
 const nav = [
   { to: '/admin/profile', label: 'Profile', icon: UserRound },
@@ -22,6 +23,7 @@ export default function AdminLayout({ theme, setTheme }) {
   const [authError, setAuthError] = useState('');
   const processingJob = useRef(false);
   const navigate = useNavigate();
+  const headerVisible = useScrollHeader();
 
   const processReindexJob = useCallback(async (jobId) => {
     if (processingJob.current) return;
@@ -145,7 +147,7 @@ export default function AdminLayout({ theme, setTheme }) {
     </aside>
     {mobileOpen && <button className="sidebar-scrim" aria-label="Close admin navigation" onClick={() => setMobileOpen(false)} />}
     <main className="admin-main">
-      <header className="admin-topbar"><div className="admin-topbar-left"><button className="icon-button mobile-only" onClick={() => setMobileOpen(true)} aria-label="Open admin navigation"><Menu size={19} /></button><span className="admin-breadcrumb">PORTFOLIO CONTENT</span></div><div className="admin-topbar-right"><Link className="view-public-link" to="/" target="_blank">View public site ↗</Link></div></header>
+      <header className={`admin-topbar sticky-page-header scroll-aware-header ${headerVisible ? '' : 'scroll-aware-header-hidden'}`}><div className="admin-topbar-left"><button className="icon-button mobile-only" onClick={() => setMobileOpen(true)} aria-label="Open admin navigation"><Menu size={19} /></button><span className="admin-breadcrumb">PORTFOLIO CONTENT</span></div><div className="admin-topbar-right"><Link className="view-public-link" to="/" target="_blank">View public site ↗</Link></div></header>
       <ToastStack><Toast message={notice} type={noticeType} onDismiss={() => setNotice('')} /></ToastStack>
       <div className="admin-page-content"><Outlet /></div>
       <footer className="admin-footer"><span>Folioport Admin</span><span>Changes save to the portfolio database</span></footer>
