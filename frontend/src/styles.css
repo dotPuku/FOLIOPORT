@@ -1536,6 +1536,24 @@ pre,
   margin: 15px 0
 }
 
+.retrieved-evidence-row {
+  border-top: 1px solid var(--border);
+  padding: 14px 0
+}
+
+.retrieved-evidence-row:last-child {
+  padding-bottom: 0
+}
+
+.retrieved-evidence-row>strong {
+  font-size: 12px;
+  line-height: 1.6
+}
+
+.semantic-score {
+  color: var(--muted)
+}
+
 .breakdown-label {
   display: flex;
   align-items: center;

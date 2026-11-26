@@ -197,9 +197,53 @@ def retrieve(query, limit=5, public_only=True):
         collection_name=_collection_name(), query=vector, query_filter=query_filter,
         limit=result_limit * 4, with_payload=True, timeout=8,
     )
+    return _format_hits(result.points, result_limit, public_only)
+
+
+def retrieve_many(queries, limit=5, public_only=True):
+    query_texts = [str(query).strip() for query in queries if isinstance(query, str) and query.strip()]
+    if not query_texts:
+        return []
+    if len(query_texts) > 20:
+        raise ValueError("A maximum of 20 semantic retrieval queries is allowed.")
+
+    client = _get_client()
+    vectors = list(_get_embedder().embed(query_texts))
+    if len(vectors) != len(query_texts):
+        raise RuntimeError("The embedding model returned an unexpected number of vectors.")
+    _ensure_collection(client, len(vectors[0]))
+    result_limit = max(1, min(int(limit), 20))
+    query_filter = None
+    if public_only:
+        query_filter = models.Filter(must=[
+            models.FieldCondition(key="is_public", match=models.MatchValue(value=True))
+        ])
+    requests = [
+        models.QueryRequest(
+            query=vector.tolist(),
+            filter=query_filter,
+            limit=result_limit * 4,
+            with_payload=True,
+        )
+        for vector in vectors
+    ]
+    results = client.query_batch_points(
+        collection_name=_collection_name(),
+        requests=requests,
+        timeout=8,
+    )
+    if len(results) != len(query_texts):
+        raise RuntimeError("The vector database returned an unexpected number of query results.")
+    return [
+        _format_hits(result.points, result_limit, public_only)
+        for result in results
+    ]
+
+
+def _format_hits(points, result_limit, public_only):
     hits = []
     seen_entities = set()
-    for point in result.points:
+    for point in points:
         payload = point.payload or {}
         text = payload.get("text")
         if public_only and payload.get("is_public") is not True:

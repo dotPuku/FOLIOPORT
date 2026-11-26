@@ -1,10 +1,9 @@
 import re
 import math
 from datetime import date, datetime
-from collections import Counter
 from ..utils.text import normalize_phrase
 from .portfolio import get_portfolio_bundle, remove_empty_values
-from .rag import retrieve
+from .rag import retrieve, retrieve_many
 from .ai import json_completion, AIServiceError
 from .prompts import JOB_EXTRACTION_SYSTEM
 
@@ -155,12 +154,6 @@ def _extract_jd(job_description):
     return extracted
 
 
-def _keywords(text):
-    stop = {"the", "and", "for", "with", "from", "that", "this", "will", "are", "you", "your", "our", "their", "have", "has", "into", "using", "use", "must", "can", "not", "all", "any", "who", "what", "where", "when", "how", "work", "working", "ability", "strong", "good", "plus", "years", "year", "experience", "knowledge", "skills", "skill", "preferred", "required", "responsible", "responsibilities", "including", "etc", "team", "role", "job", "developer", "development", "build", "building", "design", "support", "within"}
-    tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9+#./-]{2,}", (text or "").lower())
-    return [t for t, _ in Counter(t for t in tokens if t not in stop).most_common(35)]
-
-
 def _corpus_from_bundle(bundle):
     records = []
     profile = remove_empty_values(bundle.get("profile") or {}) or {}
@@ -217,6 +210,49 @@ def _corpus_from_bundle(bundle):
 
 def _semantic_evidence(skill, limit=3):
     return retrieve(skill, limit=limit, public_only=True)
+
+
+def _relevant_record_evidence(requirements, retrieved, record_kinds):
+    if not requirements:
+        return [], None
+    if len(retrieved) != len(requirements):
+        raise RuntimeError("Semantic evidence did not match the extracted requirements.")
+
+    evidence_groups = []
+    supported_count = 0
+    for requirement, hits in zip(requirements, retrieved):
+        evidence = []
+        seen_entities = set()
+        for hit in hits:
+            if not isinstance(hit, dict):
+                continue
+            score = hit.get("score")
+            if (
+                hit.get("is_public") is not True
+                or hit.get("kind") not in record_kinds
+                or not isinstance(score, (int, float))
+                or isinstance(score, bool)
+                or not math.isfinite(score)
+                or score < RELATED_SCORE_THRESHOLD
+            ):
+                continue
+            identity = (hit.get("kind"), str(hit.get("entity_id", hit.get("title", ""))))
+            if identity in seen_entities:
+                continue
+            seen_entities.add(identity)
+            evidence.append({
+                "title": str(hit.get("title") or "Portfolio evidence")[:160],
+                "kind": hit["kind"],
+                "entity_id": hit.get("entity_id"),
+                "score": round(float(score), 3),
+                "text": str(hit.get("text") or "")[:360],
+            })
+            if len(evidence) >= 2:
+                break
+        if evidence:
+            supported_count += 1
+        evidence_groups.append({"requirement": requirement, "evidence": evidence})
+    return evidence_groups, 100.0 * supported_count / len(requirements)
 
 
 def _normalized_requirements(items, *, limit, preferred=False):
@@ -289,10 +325,18 @@ def analyze_job(job_description):
         item for item in _normalized_requirements(extracted["preferred_skills"], limit=15, preferred=True)
         if _canonical(item["skill"]) not in required_names
     ]
-    responsibilities = [
-        item.strip()[:500] for item in extracted["responsibilities"]
-        if isinstance(item, str) and item.strip()
-    ][:30]
+    responsibilities = []
+    seen_responsibilities = set()
+    for item in extracted["responsibilities"]:
+        if not isinstance(item, str) or not item.strip():
+            continue
+        responsibility = item.strip()[:500]
+        identity = normalize_phrase(responsibility)
+        if identity and identity not in seen_responsibilities:
+            seen_responsibilities.add(identity)
+            responsibilities.append(responsibility)
+        if len(responsibilities) >= 12:
+            break
     experience_requirements = []
     minimum_years = []
     for item in extracted["experience_requirements"][:15]:
@@ -309,10 +353,18 @@ def analyze_job(job_description):
             "text": str(item.get("text") or "").strip()[:300],
         })
     experience_requirements = experience_requirements[:15]
-    education_requirements = [
-        item.strip()[:300] for item in extracted["education_requirements"]
-        if isinstance(item, str) and item.strip()
-    ][:15]
+    education_requirements = []
+    seen_education_requirements = set()
+    for item in extracted["education_requirements"]:
+        if not isinstance(item, str) or not item.strip():
+            continue
+        requirement = item.strip()[:300]
+        identity = normalize_phrase(requirement)
+        if identity and identity not in seen_education_requirements:
+            seen_education_requirements.add(identity)
+            education_requirements.append(requirement)
+        if len(education_requirements) >= 12:
+            break
     job_keywords = [
         item.strip()[:120] for item in extracted["keywords"]
         if isinstance(item, str) and item.strip()
@@ -321,6 +373,32 @@ def analyze_job(job_description):
     bundle = get_portfolio_bundle(public_only=True)
     records = _corpus_from_bundle(bundle)
 
+    project_experience_exists = any(
+        record["kind"] in {"project", "experience"}
+        for record in records
+    )
+    responsibility_matches = (
+        retrieve_many(responsibilities, limit=5, public_only=True)
+        if responsibilities and project_experience_exists
+        else [[] for _ in responsibilities]
+    )
+    responsibility_evidence, project_score = _relevant_record_evidence(
+        responsibilities,
+        responsibility_matches,
+        {"project", "experience"},
+    )
+    education_exists = any(record["kind"] == "education" for record in records)
+    education_matches = (
+        retrieve_many(education_requirements, limit=5, public_only=True)
+        if education_requirements and education_exists
+        else [[] for _ in education_requirements]
+    )
+    education_evidence, education_score = _relevant_record_evidence(
+        education_requirements,
+        education_matches,
+        {"education"},
+    )
+
     def score_skill(item):
         name = item["skill"]
         exact_records = [
@@ -328,11 +406,14 @@ def analyze_job(job_description):
             if record["kind"] == "skill" and _same_skill_name(name, record.get("skill_name"))
         ]
         context_hits = _term_record_match(name, records) if not exact_records else []
-        semantic = _semantic_evidence(name, limit=6) if not exact_records and not context_hits else []
+        evidence_context = item["evidence"]
+        semantic_query = f"{name}\nJob requirement: {evidence_context}" if evidence_context else name
+        semantic = _semantic_evidence(semantic_query, limit=6) if not exact_records and not context_hits else []
         semantic_hits = [
             hit for hit in semantic
             if hit.get("is_public") is True
             and isinstance(hit.get("score"), (int, float))
+            and math.isfinite(hit["score"])
             and hit["score"] >= RELATED_SCORE_THRESHOLD
         ]
         related_hits = semantic_hits[:2] or context_hits[:2]
@@ -387,29 +468,11 @@ def analyze_job(job_description):
     if minimum_years:
         required_years = max(minimum_years)
         candidate_years = _candidate_years(bundle)
-        years_score = 100.0 if required_years == 0 else min(100.0, candidate_years / required_years * 100.0)
-        exp_keyword_set = _keywords(" ".join(responsibilities))
-        exp_text = " ".join(r["text"] for r in records if r["kind"] == "experience")
-        if exp_keyword_set:
-            exp_coverage = 100.0 * sum(_contains_term(exp_text, keyword) for keyword in exp_keyword_set) / len(exp_keyword_set)
-            experience_score = years_score * 0.7 + exp_coverage * 0.3
-        else:
-            experience_score = years_score
-
-    project_score = None
-    if responsibilities:
-        keywords = _keywords(" ".join(responsibilities))
-        project_text = " ".join(r["text"] for r in records if r["kind"] in {"project", "experience"})
-        if keywords:
-            project_score = 100.0 * sum(_contains_term(project_text, keyword) for keyword in keywords) / len(keywords)
-
-    education_score = None
-    education_records = [r for r in records if r["kind"] == "education"]
-    if education_requirements:
-        req_terms = _keywords(" ".join(education_requirements))
-        edu_text = " ".join(r["text"] for r in education_records)
-        if req_terms:
-            education_score = 100.0 * sum(_contains_term(edu_text, term) for term in req_terms) / len(req_terms)
+        experience_score = (
+            100.0
+            if required_years == 0
+            else min(100.0, candidate_years / required_years * 100.0)
+        )
 
     score_components = []
     for score, weight, name in [
@@ -451,14 +514,18 @@ def analyze_job(job_description):
         "required_skills": required_results,
         "preferred_skills": preferred_results,
         "responsibilities": responsibilities[:12],
+        "responsibility_evidence": responsibility_evidence,
         "experience_requirements": experience_requirements,
         "education_requirements": education_requirements,
+        "education_evidence": education_evidence,
         "keywords": job_keywords,
         "report": report,
         "scoring_note": (
             "This rule-based estimate compares only public portfolio data with extracted job requirements. "
             "A skill is an exact match only when it is listed as a saved skill; project or experience mentions "
             "and vector-retrieved evidence are shown as related, not as confirmed skills. Similarity scores are "
-            "retrieval signals, not probabilities. Available score categories are normalized to their stated weights."
+            "retrieval signals, not probabilities. Project relevance reflects the share of distinct job responsibilities "
+            "with sufficiently relevant public project or experience evidence. Available score categories are normalized "
+            "to their stated weights."
         ),
     }

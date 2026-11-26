@@ -24,6 +24,20 @@ function SkillGroup({ title, items, tone }) {
   </section>;
 }
 
+function EvidenceCard({ eyebrow, title, caption, items, emptyMessage }) {
+  if (!items?.length) return null;
+  return <section className="breakdown-card">
+    <div className="section-heading"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div><span className="detail-note">{caption}</span></div>
+    {items.map((item, index) => <article className="retrieved-evidence-row" key={`${index}-${item.requirement}`}>
+      <strong>{item.requirement}</strong>
+      {item.evidence.length ? item.evidence.map((evidence) => <p className="evidence-text" key={`${evidence.kind}-${evidence.entity_id || evidence.title}`}>
+        <span>{evidence.title}: {evidence.text}</span>
+        <span className="semantic-score"> · similarity {Math.round(evidence.score * 100)}% (retrieval signal, not a probability)</span>
+      </p>) : <p className="evidence-text">{emptyMessage}</p>}
+    </article>)}
+  </section>;
+}
+
 function ScoreRing({ score }) {
   const hasScore = Number.isFinite(score);
   const style = { '--score-angle': `${hasScore ? Math.max(0, Math.min(100, score)) * 3.6 : 0}deg` };
@@ -80,6 +94,8 @@ export default function JobMatcher({ theme, setTheme }) {
         <section className="breakdown-card"><div className="section-heading"><div><p className="eyebrow">SCORE BREAKDOWN</p><h2>What makes up your score</h2></div><span className="detail-note">Weighted, normalized components</span></div>
           {Object.entries(result.score_breakdown || {}).length ? Object.entries(result.score_breakdown || {}).map(([key, value]) => <div className="breakdown-row" key={key}><div className="breakdown-label"><span>{key.replaceAll('_', ' ').replace(/\b\w/g, (x) => x.toUpperCase())}</span><strong>{value}%</strong></div><div className="breakdown-track"><div className="breakdown-fill" style={{ width: pct(value) }} /></div></div>) : <p className="evidence-text">No measurable scoring criteria were identified in this job description.</p>}
         </section>
+        <EvidenceCard eyebrow="SEMANTIC EVIDENCE" title="Portfolio evidence relevant to this role" caption="Public projects and experience" items={result.responsibility_evidence} emptyMessage="No sufficiently relevant public project or experience evidence was retrieved." />
+        <EvidenceCard eyebrow="EDUCATION EVIDENCE" title="Education requirement matches" caption="Public education records" items={result.education_evidence} emptyMessage="No sufficiently relevant public education evidence was retrieved." />
         <div className="skill-results-columns"><SkillGroup title="Matched skills" items={result.matched_skills} tone="good" /><SkillGroup title="Related evidence" items={result.related_skills} tone="related" /><SkillGroup title="Skills to build / evidence" items={result.unmatched_skills} tone="gap" /></div>
         <section className="report-card"><div className="report-icon"><Sparkles size={18} /></div><div><p className="eyebrow">CAREER COACH NOTES</p><h2>How to strengthen your application</h2><p className="report-summary">{result.report?.summary}</p><div className="report-columns"><div><h3>Strengths</h3>{(result.report?.strengths || []).map((x, i) => <p className="report-bullet" key={i}><CheckCircle2 size={15} />{x}</p>)}</div><div><h3>Gaps to address</h3>{(result.report?.gaps || []).map((x, i) => <p className="report-bullet" key={i}><XCircle size={15} />{x}</p>)}</div></div><h3>Suggested next steps</h3><ol className="next-steps">{(result.report?.next_steps || []).map((x, i) => <li key={i}>{x}</li>)}</ol></div></section>
         {result.keywords?.length > 0 && <section className="keyword-panel"><h3>Keywords extracted from the job</h3><div className="keyword-list">{result.keywords.map((x) => <span key={x}>{x}</span>)}</div></section>}

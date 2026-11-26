@@ -162,9 +162,9 @@ Each admin page sends an uploaded resume to the authenticated parse endpoint wit
 1. The endpoint accepts pasted text or extracts text from TXT, PDF, DOC, or DOCX. Image-only documents are unsupported because OCR is not included.
 2. Groq converts the job description into a validated JSON structure: required and preferred skills, responsibilities, experience requirements, education requirements, and keywords. Duplicate skill names are removed and obvious aliases are normalized.
 3. Python loads the **public** SQL portfolio. Exact skill matches compare normalized names against saved skill records. Mentions in project/experience/profile text are related evidence, not proof of a saved skill.
-4. Qdrant may surface additional public related passages. Only results at or above the retrieval threshold are shown as related; their similarity value is a retrieval signal, not a probability.
-5. The scorer uses required/preferred skill coverage and, when the JD provides measurable information, experience duration, project relevance, and education. A matched skill earns full credit, related evidence earns partial credit, and a gap earns none. Missing categories are omitted and the remaining component weights are normalized.
-6. Report text is assembled deterministically from the scored evidence. The model does not invent the candidate report or control the numeric score.
+4. Qdrant embeds skill requirements with their job-description evidence and batch-retrieves public portfolio passages for distinct responsibilities and education requirements. Only evidence from relevant record types above the relevance threshold contributes to project or education coverage; supporting passages are shown in the report. Similarity values are retrieval signals, not probabilities.
+5. Exact skill matches require a saved skill name or recognized alias. Related evidence from project, experience, or semantic retrieval earns partial credit, while unsupported requirements remain gaps. Measurable years use structured dates/profile data; missing score categories are omitted and the remaining component weights are normalized.
+6. Report text is assembled deterministically from scored requirements and retrieved evidence. The model does not invent the candidate report or control the numeric score.
 
 The estimate supports candidate preparation; it is not a hiring decision or prediction. Keyword extraction and semantic retrieval can miss context or return imperfect neighbours, so users should inspect the evidence and correct their portfolio data.
 

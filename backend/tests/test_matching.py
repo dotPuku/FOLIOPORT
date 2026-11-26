@@ -42,7 +42,7 @@ class JobMatchingTests(unittest.TestCase):
             "education": [],
         }
 
-    def analyze(self, extracted, bundle=None, semantic_hits=None):
+    def analyze(self, extracted, bundle=None, semantic_hits=None, responsibility_hits=None):
         with self.app.app_context(), patch(
             "app.services.matching.json_completion", return_value=extracted
         ), patch(
@@ -51,7 +51,14 @@ class JobMatchingTests(unittest.TestCase):
         ) as get_bundle, patch(
             "app.services.matching.retrieve",
             return_value=semantic_hits or [],
-        ) as retrieve:
+        ) as retrieve, patch(
+            "app.services.matching.retrieve_many",
+            return_value=(
+                responsibility_hits
+                if responsibility_hits is not None
+                else [[] for _ in extracted.get("responsibilities", [])]
+            ),
+        ):
             result = analyze_job(self.description)
         return result, get_bundle, retrieve
 
@@ -102,7 +109,151 @@ class JobMatchingTests(unittest.TestCase):
 
         self.assertEqual(result["unmatched_skills"][0]["skill"], "Kubernetes")
         self.assertEqual(result["score"], 0)
-        retrieve.assert_called_once_with("Kubernetes", limit=6, public_only=True)
+        retrieve.assert_called_once_with(
+            "Kubernetes\nJob requirement: Kubernetes",
+            limit=6,
+            public_only=True,
+        )
+
+    def test_skill_retrieval_uses_job_requirement_context(self):
+        requirement = "Deploy containerized services across managed clusters."
+        _, _, retrieve = self.analyze(
+            extracted_job(required=[
+                {"skill": "Kubernetes", "importance": "high", "evidence": requirement}
+            ]),
+            semantic_hits=[{
+                "title": "Cluster deployment",
+                "text": "Deployed containerized workloads across managed clusters.",
+                "score": 0.73,
+                "is_public": True,
+            }],
+        )
+
+        retrieve.assert_called_once_with(
+            f"Kubernetes\nJob requirement: {requirement}",
+            limit=6,
+            public_only=True,
+        )
+
+    def test_responsibility_relevance_uses_semantic_project_evidence(self):
+        responsibilities = [
+            "Build accessible user interfaces for customers.",
+            "Improve automated production deployment reliability.",
+        ]
+        bundle = {
+            "profile": {},
+            "skills": [],
+            "projects": [{"id": 1, "name": "Accessible dashboard"}],
+            "experience": [],
+            "education": [],
+        }
+        retrieved = [
+            [
+                {
+                    "title": "Accessible dashboard",
+                    "kind": "project",
+                    "entity_id": 1,
+                    "text": "Built keyboard-accessible dashboard workflows.",
+                    "score": 0.76,
+                    "is_public": True,
+                },
+                {
+                    "title": "Private deployment",
+                    "kind": "project",
+                    "entity_id": 2,
+                    "text": "Private release data.",
+                    "score": 0.98,
+                    "is_public": False,
+                },
+                {
+                    "title": "Weak match",
+                    "kind": "project",
+                    "entity_id": 3,
+                    "text": "Unrelated project.",
+                    "score": 0.47,
+                    "is_public": True,
+                },
+            ],
+            [{
+                "title": "Accessible dashboard",
+                "kind": "project",
+                "entity_id": 1,
+                "text": "A result for a different responsibility.",
+                "score": 0.45,
+                "is_public": True,
+            }],
+        ]
+
+        with self.app.app_context(), patch(
+            "app.services.matching.json_completion",
+            return_value=extracted_job(responsibilities=responsibilities),
+        ), patch(
+            "app.services.matching.get_portfolio_bundle",
+            return_value=bundle,
+        ), patch(
+            "app.services.matching.retrieve",
+            return_value=[],
+        ), patch(
+            "app.services.matching.retrieve_many",
+            return_value=retrieved,
+        ) as retrieve_batch:
+            result = analyze_job(self.description)
+
+        self.assertEqual(result["score_breakdown"], {"project_relevance": 50})
+        self.assertEqual(len(result["responsibility_evidence"][0]["evidence"]), 1)
+        self.assertEqual(result["responsibility_evidence"][1]["evidence"], [])
+        retrieve_batch.assert_called_once_with(
+            responsibilities,
+            limit=5,
+            public_only=True,
+        )
+
+    def test_education_relevance_uses_public_education_evidence(self):
+        requirement = "Bachelor's degree in computer science or a closely related field."
+        bundle = {
+            "profile": {},
+            "skills": [],
+            "projects": [],
+            "experience": [],
+            "education": [{
+                "id": 7,
+                "institution": "Example University",
+                "degree": "Bachelor of Science",
+                "stream": "Computer Science",
+            }],
+        }
+        retrieved = [[{
+            "title": "Example University",
+            "kind": "education",
+            "entity_id": 7,
+            "text": "Bachelor of Science in Computer Science.",
+            "score": 0.81,
+            "is_public": True,
+        }]]
+
+        with self.app.app_context(), patch(
+            "app.services.matching.json_completion",
+            return_value=extracted_job(education=[requirement]),
+        ), patch(
+            "app.services.matching.get_portfolio_bundle",
+            return_value=bundle,
+        ), patch(
+            "app.services.matching.retrieve_many",
+            return_value=retrieved,
+        ) as retrieve_batch:
+            result = analyze_job(self.description)
+
+        self.assertEqual(result["score_breakdown"], {"education": 100})
+        self.assertEqual(result["education_evidence"][0]["requirement"], requirement)
+        self.assertEqual(
+            result["education_evidence"][0]["evidence"][0]["text"],
+            "Bachelor of Science in Computer Science.",
+        )
+        retrieve_batch.assert_called_once_with(
+            [requirement],
+            limit=5,
+            public_only=True,
+        )
 
     def test_no_measurable_requirements_returns_no_score(self):
         result, _, _ = self.analyze(extracted_job())
