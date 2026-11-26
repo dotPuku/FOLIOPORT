@@ -1,5 +1,8 @@
-const DEFAULT_API_BASE = import.meta.env.PROD ? '/api' : 'http://127.0.0.1:5000/api';
-const API_BASE = (import.meta.env.VITE_API_URL || DEFAULT_API_BASE).replace(/\/$/, '');
+const API_BASE = (
+  import.meta.env.PROD
+    ? '/api'
+    : (import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000/api')
+).replace(/\/$/, '');
 const CSRF_STORAGE_KEY = 'folioport_admin_csrf';
 const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 

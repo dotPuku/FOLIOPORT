@@ -342,13 +342,7 @@ Folioport is a monorepo with a static React/Vite frontend and a Flask API. Rende
    - Build command: `npm run build`
    - Output directory: `dist`
    - Install command: `npm install` (or Vercel's detected npm install)
-3. Add this environment variable for **Production**:
-
-   ```text
-   VITE_API_URL=/api
-   ```
-
-   The production API base is the same-origin `/api` path. Do not set it to the Render URL; `frontend/vercel.json` proxies `/api/*` to `https://folioport-api.onrender.com/api/*`. If Render assigns a different service URL, update that rewrite destination and redeploy Vercel. Never add Groq, TiDB, Qdrant, or admin credentials to Vercel.
+3. Do not set `VITE_API_URL` to the Render host in Vercel. Production builds always use the same-origin `/api` path, and `frontend/vercel.json` proxies `/api/*` to `https://folioport-api.onrender.com/api/*`. Remove any old `VITE_API_URL` override from Vercel to keep the configuration clear. If Render assigns a different service URL, update the rewrite destination and redeploy Vercel. Never add Groq, TiDB, Qdrant, or admin credentials to Vercel.
 4. Deploy. Visit the generated Vercel URL, refresh `/jobmatcher`, and sign into `/admin/login`. The included rewrite sends API requests to Render and routes other paths back to the SPA entry point.
 5. Set Render's `CORS_ORIGINS` to the exact Vercel production origin, such as `https://dotpuku.vercel.app` (no trailing slash). Save and restart/redeploy the Render service. Use the actual Vercel production URL if it differs.
 6. Visit the Vercel site, refresh `/jobmatcher`, sign into `/admin/login`, and try a public chat and job match. The browser stays on the Vercel origin for API calls, so the HttpOnly cookie is first-party; no custom domain is needed. Vercel preview deployments may require their exact preview origin in `CORS_ORIGINS` if you want to test API calls from previews.
@@ -361,7 +355,7 @@ Render Free is intended for hobby/testing use, not production workloads. Its web
 - Open the Render `/api/health` URL and verify `database` is `connected`.
 - Open the Vercel frontend, refresh `/jobmatcher`, sign into `/admin/login`, and try a public chat and job match.
 - In browser developer tools, a CORS error usually means `CORS_ORIGINS` is missing the exact Vercel production origin, has a trailing slash, or Render has not restarted since the change.
-- A failed request to `/api/*` may mean the Render service URL in `frontend/vercel.json` is wrong; correct the rewrite destination and redeploy Vercel.
+- A failed request to `/api/*` may mean the Render service URL in `frontend/vercel.json` is wrong; correct the rewrite destination and redeploy Vercel. Production frontend code always uses `/api`, even if an old `VITE_API_URL` setting remains in Vercel.
 - A 503 from AI or matching endpoints usually means Groq or Qdrant credentials/configuration are missing or invalid. Check Render logs; keep provider keys only in Render's environment settings.
 - If Render logs show the process being killed or out-of-memory errors while FastEmbed initializes, the Free plan's 512 MB limit is insufficient for that workload; reduce usage or move embedding generation off the web process/upgrade the service rather than repeatedly restarting it.
 - If admin login fails, confirm the account was created against the same TiDB database used by the Render service.
