@@ -257,7 +257,7 @@ Folioport is a monorepo with a static React/Vite frontend and a Flask API. Rende
    ```
 
    If the folder already has a Git remote, use its existing branch and push normally instead of initializing it or adding a second remote. Review the staged file list before committing.
-5. Have production credentials ready in their providers: a TiDB Cloud connection URL, a Groq API key, and a Qdrant Cloud URL/API key. Do not put these in GitHub source files or GitHub Actions.
+5. Have service credentials ready in their providers: a TiDB Cloud connection URL, a Groq API key, and a Qdrant Cloud URL/API key. Render Free does not make these external services free; check each provider's current plans and usage limits. Do not put credentials in GitHub source files or GitHub Actions.
 
 ### Deploy the API to Render
 
@@ -272,7 +272,7 @@ Folioport is a monorepo with a static React/Vite frontend and a Flask API. Rende
    | `QDRANT_URL` | Qdrant Cloud cluster URL |
    | `QDRANT_API_KEY` | Secret key from Qdrant Cloud |
 
-   Render generates `SECRET_KEY` and `JWT_SECRET_KEY`; do not replace them with weak or shared values. The Blueprint sets `FLASK_DEBUG=0`, Python 3.12, the model defaults, Gunicorn, and `/api/health` as its health-check path.
+   Render generates `SECRET_KEY` and `JWT_SECRET_KEY`; do not replace them with weak or shared values. The Blueprint selects the Free plan, sets `FLASK_DEBUG=0`, Python 3.12, the model defaults, one Gunicorn worker, and `/api/health` as its health-check path.
 3. **Configure TiDB before the first successful app start.** This project runs its schema bootstrap at startup and has MySQL/TiDB-specific schema compatibility SQL. Do not rely on Render's ephemeral local disk/SQLite for production data, and do not substitute a Render PostgreSQL URL. Use a TiDB Cloud database and the exact TLS-enabled connection string. URL-encode special characters in the username/password.
 4. Wait for the first deployment to complete. Copy the service URL, for example `https://folioport-api.onrender.com`, and open:
 
@@ -281,7 +281,22 @@ Folioport is a monorepo with a static React/Vite frontend and a Flask API. Rende
    ```
 
    Confirm the JSON reports `"database": "connected"`. If the service fails to start, inspect Render's deploy logs first, then verify the database URL/TLS and required environment variables.
-5. In the Render service's **Shell**, run `python -m scripts.create_admin` and follow the prompts to create the private admin login. Use a unique, strong password. Do not put the password in the repo or a deployment command.
+5. Render Free has no Shell/SSH access or one-off jobs, so create the admin account from your computer against the **same TiDB database** used by Render. In PowerShell, open the backend folder, enter the URL at the prompt, and run the existing script:
+
+   ```powershell
+   Set-Location backend
+   $secureUrl = Read-Host "Production TiDB URL" -AsSecureString
+   $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureUrl)
+   try {
+       $env:TIDB_URL = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+       .\.venv\Scripts\python.exe -m scripts.create_admin
+   } finally {
+       Remove-Item Env:\TIDB_URL -ErrorAction SilentlyContinue
+       [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+   }
+   ```
+
+   Use the backend virtual environment created during setup. Enter the URL at the masked prompt; do not put it directly in a command, source file, GitHub, or Vercel. The script asks for the admin username, email, and password and writes the account to TiDB. If it fails, check that TiDB allows connections from your local network and that the URL/TLS options are correct. Use a unique, strong password.
 
 ### Deploy the frontend to Vercel
 
@@ -301,19 +316,23 @@ Folioport is a monorepo with a static React/Vite frontend and a Flask API. Rende
 5. Copy the final Vercel production origin (scheme + domain only, no path or trailing slash) into Render's `CORS_ORIGINS`. Save the environment change and redeploy/restart the Render service. The backend checks exact origins; wildcard Vercel preview domains are not accepted by this project. For a preview, add that specific preview URL to `CORS_ORIGINS` or test against production only.
 6. Pushes to the connected GitHub branch trigger deployments. Vercel can create preview deployments for pull requests; Render deploys pushes to its selected branch. After changing `VITE_API_URL` in Vercel, trigger a new Vercel deployment because Vite embeds it at build time.
 
-### Production smoke test and common failures
+### Render Free limits and post-deploy checks
+
+Render Free is intended for hobby/testing use, not production workloads. Its web service has 0.1 CPU and 512 MB RAM, spins down after 15 minutes without inbound traffic, and can take about a minute to wake when the next request arrives. Free services share a 750-hour monthly allowance per workspace; exhausting it suspends Free services until the next month. The filesystem is ephemeral, with no persistent disk, Shell/SSH, or one-off job support. The Blueprint uses one Gunicorn worker to limit memory use and a longer request timeout for cold model initialization. Do not store portfolio data or SQLite databases on Render's filesystem. TiDB and Qdrant remain external hosted services; check their own pricing and limits.
 
 - Open the Render `/api/health` URL and verify `database` is `connected`.
 - Open the Vercel site, refresh `/jobmatcher`, sign into `/admin/login`, and try a public chat and job match.
 - In browser developer tools, a CORS error usually means `CORS_ORIGINS` is missing the exact Vercel origin, has a trailing slash, or Render has not restarted since the change.
 - A frontend request to `127.0.0.1:5000` means `VITE_API_URL` was missing/wrong at Vercel build time; fix it and redeploy.
 - A 503 from AI or matching endpoints usually means Groq or Qdrant credentials/configuration are missing or invalid. Check Render logs; keep provider keys only in Render's environment settings.
-- If admin login fails, confirm the account was created against the same production TiDB database used by the Render service.
-- The first semantic search can be slower while the embedding model initializes/downloads. Render's local filesystem is not a durable vector store; Qdrant Cloud and TiDB remain the hosted data services.
+- If Render logs show the process being killed or out-of-memory errors while FastEmbed initializes, the Free plan's 512 MB limit is insufficient for that workload; reduce usage or move embedding generation off the web process/upgrade the service rather than repeatedly restarting it.
+- If admin login fails, confirm the account was created against the same TiDB database used by the Render service.
+- The first semantic search can be slower while the embedding model initializes/downloads. Render Free's filesystem is temporary, so the model cache may need to download again after a restart or spin-down. Qdrant and TiDB remain the hosted data services.
 
 ### Official platform documentation
 
 - [Render: Deploy a Flask app](https://render.com/docs/deploy-flask)
+- [Render: Free instance limits](https://render.com/docs/free)
 - [Render: Blueprint specification](https://render.com/docs/blueprint-spec)
 - [Render: Configure a Python version](https://render.com/docs/python-version)
 - [Vercel: Deploy Vite projects](https://vercel.com/docs/frameworks/frontend/vite)
