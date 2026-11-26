@@ -126,10 +126,41 @@ class ResumeImportTests(unittest.TestCase):
             [{"text": "Source Code", "url": "https://github.com/jordan/portfolio"}],
         )
 
+    def test_docx_parser_extracts_table_and_header_text(self):
+        document = Document()
+        document.sections[0].header.paragraphs[0].text = "Jordan Example | Software Engineer"
+        table = document.add_table(rows=1, cols=1)
+        table.cell(0, 0).text = "Built a portfolio platform using Python and React."
+        buffer = BytesIO()
+        document.save(buffer)
+        upload = FileStorage(stream=BytesIO(buffer.getvalue()), filename="resume.docx")
+
+        parsed = parse_uploaded_resume(upload)
+
+        self.assertIn("Jordan Example", parsed["text"])
+        self.assertIn("Built a portfolio platform using Python and React.", parsed["text"])
+
+    def test_legacy_doc_resume_is_extracted(self):
+        resume_text = "Jordan Example is a software engineer with Python and React experience."
+        upload = FileStorage(stream=BytesIO(b"legacy Word document"), filename="resume.doc")
+
+        with patch("app.services.document_parser.extract_legacy_doc") as extract:
+            extract.return_value.text = resume_text
+            parsed = parse_uploaded_resume(upload)
+
+        extract.assert_called_once_with(b"legacy Word document")
+        self.assertEqual(parsed, {"text": resume_text, "links": []})
+
     def test_resume_parser_rejects_text_file_extension(self):
         upload = FileStorage(stream=BytesIO(b"resume text"), filename="resume.txt")
-        with self.assertRaisesRegex(DocumentParseError, "Upload a .pdf or .docx resume"):
+        with self.assertRaisesRegex(DocumentParseError, "Upload a .pdf, .doc, or .docx resume"):
             parse_uploaded_resume(upload)
+
+    def test_low_text_error_does_not_assume_pdf(self):
+        upload = FileStorage(stream=BytesIO(b"short text"), filename="resume.docx")
+        with patch("app.services.document_parser._extract_docx", return_value=("short text", [])):
+            with self.assertRaisesRegex(DocumentParseError, "this document"):
+                parse_uploaded_resume(upload)
 
     def test_text_parser_handles_utf8_bom_and_encrypted_resume_is_rejected(self):
         resume_text = "Résumé — software engineer with Python and React experience. " * 4

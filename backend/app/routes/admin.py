@@ -237,7 +237,7 @@ def patch_profile():
 def parse_resume():
     uploaded = request.files.get("file")
     if not uploaded or not uploaded.filename:
-        return jsonify({"error": "Choose a PDF or DOCX resume to upload."}), 400
+        return jsonify({"error": "Choose a PDF, DOC, or DOCX resume to upload."}), 400
     section = request.form.get("section")
     if section and section not in {"profile", "skills", "education", "projects", "experience"}:
         return jsonify({"error": "Choose a valid resume section."}), 400

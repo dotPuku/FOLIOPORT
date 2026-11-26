@@ -119,7 +119,7 @@ export default function ResumeImport({ onSaved, section = 'all' }) {
   }));
 
   const parseResume = async (selectedFile = file) => {
-    if (!selectedFile) { setError('Choose a PDF or DOCX resume first.'); return; }
+    if (!selectedFile) { setError('Choose a PDF, DOC, or DOCX resume first.'); return; }
     setParsing(true); setPreview(null); setError(''); setNotice('');
     try {
       const body = new FormData();
@@ -171,10 +171,10 @@ export default function ResumeImport({ onSaved, section = 'all' }) {
     </div>
     {!preview ? <>
       <div className="resume-upload-controls">
-        <label className="resume-file-picker" htmlFor="resume-upload"><FileUp size={16} /><span>{file?.name || 'Choose a PDF or DOCX file'}</span><input ref={fileInputRef} id="resume-upload" type="file" disabled={parsing} accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => { const selectedFile = event.target.files?.[0] || null; setFile(selectedFile); setError(''); setNotice(''); if (selectedFile) parseResume(selectedFile); }} /></label>
+        <label className="resume-file-picker" htmlFor="resume-upload"><FileUp size={16} /><span>{file?.name || 'Choose a PDF, DOC, or DOCX file'}</span><input ref={fileInputRef} id="resume-upload" type="file" disabled={parsing} accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => { const selectedFile = event.target.files?.[0] || null; setFile(selectedFile); setError(''); setNotice(''); if (selectedFile) parseResume(selectedFile); }} /></label>
         <button type="button" className="primary-button" onClick={parseResume} disabled={!file || parsing}>{parsing ? <><LoaderCircle className="spin" size={15} /> Processing resume…</> : <><FileUp size={15} /> Parse resume</>}</button>
       </div>
-      <p className="resume-import-hint">Use a text-based PDF or DOCX. Scanned/image-only PDFs require OCR. Nothing is saved until you confirm the preview.</p>
+      <p className="resume-import-hint">Use a text-based PDF, DOC, or DOCX. Image-only documents require OCR. Nothing is saved until you confirm the preview.</p>
     </> : <>
       <div className="resume-preview-notice"><strong>Review before saving.</strong> Extracted details may need correction. {section === 'profile' ? 'Non-empty profile values will be updated; existing public-visibility settings are unchanged.' : `Only reviewed ${section} records will be added; existing records will not be deleted.`}</div>
       {includesProfile && <section className="resume-preview-section">
@@ -195,7 +195,7 @@ export default function ResumeImport({ onSaved, section = 'all' }) {
         </article>)}</div> : <p className="resume-empty-section">No {section} records were detected.</p>}
       </section>;
       })}
-      {!hasPreviewContent && <p className="resume-empty-section">No resume details could be identified. Try a clearer text-based PDF or DOCX file.</p>}
+      {!hasPreviewContent && <p className="resume-empty-section">No resume details could be identified. Try a clearer text-based PDF, DOC, or DOCX file.</p>}
       <div className="resume-preview-actions"><button type="button" className="secondary-button" onClick={cancelPreview} disabled={saving}><RotateCcw size={14} /> Discard preview</button><button type="button" className="primary-button" onClick={saveResume} disabled={saving || !hasPreviewContent}>{saving ? <><LoaderCircle className="spin" size={15} /> Saving…</> : <><Save size={15} /> Save reviewed details</>}</button></div>
     </>}
     <ToastStack><Toast message={notice} type="success" onDismiss={() => setNotice('')} /><Toast message={error} type="error" onDismiss={() => setError('')} /></ToastStack>

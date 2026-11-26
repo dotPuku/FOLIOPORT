@@ -11,8 +11,8 @@ Folioport is a full-stack starter project with a ChatGPT-style public portfolio 
 - **RAG:** Qdrant vector retrieval, local FastEmbed sentence embeddings, chunked portfolio records, indexed public/private filters, and a durable, bounded reindex queue.
 - **Database evolution:** Alembic migrations run before the Render web process starts and are also available as a local command.
 - **Operations:** Per-IP rate limits, JSON request timing logs, request IDs, and a database-aware health endpoint.
-- **Job matcher:** Accepts pasted text or `.txt`, `.pdf`, and `.docx` files. The language model extracts requirements; Python calculates the score from public portfolio records. A skill is an exact match only when it is listed in saved skills. Project, experience, and vector-search evidence is labelled related rather than treated as confirmed skill proficiency.
-- **Admin:** Profile, Skills, Education, Projects, and Experience pages. Each page includes a PDF/DOCX resume import that extracts only that page's fields for editable review. Existing records are retained; extracted records are appended, and non-empty profile fields are updated.
+- **Job matcher:** Accepts pasted text or `.txt`, `.pdf`, `.doc`, and `.docx` files. The language model extracts requirements; Python calculates the score from public portfolio records. A skill is an exact match only when it is listed in saved skills. Project, experience, and vector-search evidence is labelled related rather than treated as confirmed skill proficiency.
+- **Admin:** Profile, Skills, Education, Projects, and Experience pages. Each page includes a PDF/DOC/DOCX resume import that extracts only that page's fields for editable review. Existing records are retained; extracted records are appended, and non-empty profile fields are updated.
 
 ## 1. Prerequisites
 
@@ -113,7 +113,7 @@ The Vite app is available at `http://127.0.0.1:5173`. In `frontend/.env`, set `V
 
 1. Sign in at `http://127.0.0.1:5173/admin/login`.
 2. In **Profile**, edit each field and click its own Save button. Use the eye buttons to control public visibility. Phone and email remain private by default.
-3. To import a resume, upload a text-based PDF or DOCX in **Profile**, then review and edit every parsed section before saving. Resume text and detected links are sent to the configured AI provider for extraction; the uploaded file is not stored. Scanned PDFs require OCR. Import does not change public visibility.
+3. To import a resume, upload a text-based PDF, DOC, or DOCX in **Profile**, then review and edit every parsed section before saving. Resume text and detected links are sent to the configured AI provider for extraction; the uploaded file is not stored. Image-only documents require OCR. Import does not change public visibility.
 4. Add Skills with a category, level, experience years, evidence, and aliases. Category suggestions are loaded from saved skill types with common defaults offered. Skills, education, projects, and experience are public portfolio records.
 5. Add Education, Projects, and Experience. Enter experience dates as `MM/YYYY` or full dates as `DD/MM/YYYY`. Use detailed descriptions, technologies, outcomes, GitHub/demo links, and evidence you can substantiate.
 6. Use **Rebuild index** in the admin sidebar after bulk updates or when Qdrant was offline during a save. It queues a database-backed job and processes five records per authenticated API request; the admin page can resume an unfinished job after reload.
@@ -132,9 +132,9 @@ You need to enter your actual portfolio records through the admin pages; the app
 | POST | `/api/auth/logout` | Admin cookie + CSRF | Clear the admin session cookie |
 | GET | `/api/public/portfolio` | Public | Public profile, skills, education, projects, experience |
 | POST | `/api/chat` | Public | Grounded portfolio question-answering |
-| POST | `/api/job-match` | Public | Analyse pasted JD or uploaded TXT/PDF/DOCX |
+| POST | `/api/job-match` | Public | Analyse pasted JD or uploaded TXT/PDF/DOC/DOCX |
 | GET/PATCH | `/api/admin/profile` | Admin cookie (+ CSRF for PATCH) | Read / save one profile field per request |
-| POST | `/api/admin/resume/parse` | Admin cookie + CSRF | Parse uploaded PDF/DOCX into an editable, unsaved preview |
+| POST | `/api/admin/resume/parse` | Admin cookie + CSRF | Parse uploaded PDF/DOC/DOCX into an editable, unsaved preview |
 | POST | `/api/admin/resume/import` | Admin cookie + CSRF | Save reviewed profile details and append reviewed portfolio records |
 | GET/POST/PUT/DELETE | `/api/admin/skills` | Admin cookie (+ CSRF for writes) | Skill CRUD |
 | GET/POST/PUT/DELETE | `/api/admin/education` | Admin cookie (+ CSRF for writes) | Education CRUD |
@@ -155,11 +155,11 @@ The browser sends the conversation to `POST /api/chat`. Flask combines the quest
 
 ### Resume import
 
-Each admin page sends an uploaded resume to the authenticated parse endpoint with its own extraction scope. The backend extracts PDF/DOCX text and asks the configured model for structured fields for that page only. The UI shows an editable preview; the user reviews it before importing. Uploads are parsed in memory and are not saved as files. Scanned PDFs require OCR, which is not included.
+Each admin page sends an uploaded resume to the authenticated parse endpoint with its own extraction scope. The backend extracts PDF/DOC/DOCX text and asks the configured model for structured fields for that page only. The UI shows an editable preview; the user reviews it before importing. Uploads are parsed in memory and are not saved as files. Image-only documents require OCR, which is not included.
 
 ### Job description matching
 
-1. The endpoint accepts pasted text or extracts text from TXT, PDF, or DOCX. Scanned/image-only PDFs are unsupported because OCR is not included.
+1. The endpoint accepts pasted text or extracts text from TXT, PDF, DOC, or DOCX. Image-only documents are unsupported because OCR is not included.
 2. Groq converts the job description into a validated JSON structure: required and preferred skills, responsibilities, experience requirements, education requirements, and keywords. Duplicate skill names are removed and obvious aliases are normalized.
 3. Python loads the **public** SQL portfolio. Exact skill matches compare normalized names against saved skill records. Mentions in project/experience/profile text are related evidence, not proof of a saved skill.
 4. Qdrant may surface additional public related passages. Only results at or above the retrieval threshold are shown as related; their similarity value is a retrieval signal, not a probability.
@@ -242,7 +242,7 @@ npm run build
 - The API logs structured request IDs, route, status, and request time to Render logs; chat separately logs retrieval and completion time. `/api/health` returns 503 when the SQL database cannot be reached. These are operational logs and health checks, not a hosted alerting/metrics service.
 - Alembic migrations run before Gunicorn starts. `db.create_all()` is reserved for isolated test setup; it is not the production migration mechanism.
 - Qdrant indexing after a database save is best-effort. If the vector provider is offline, SQL remains saved and the API returns an `index_warning`; rebuild from the admin sidebar when connectivity returns.
-- Resume/JD parsing is text extraction only; scanned/image-only PDFs need OCR outside this project. Avoid using matcher results as the sole basis for a hiring or employment decision.
+- Resume/JD parsing is text extraction only; scanned/image-only documents need OCR outside this project. Avoid using matcher results as the sole basis for a hiring or employment decision.
 
 ## 10. Common troubleshooting
 
@@ -253,7 +253,7 @@ npm run build
 - **Admin sign-in fails on hosted domains:** verify that the frontend uses its Vercel `/api` path, that `frontend/vercel.json` points to the correct Render service URL, and that Render's `CORS_ORIGINS` contains the exact Vercel production origin.
 - **Too many requests:** wait for the applicable rate-limit window to expire. Memory-backed counters reset when the Render service restarts.
 - **Migration error:** inspect Render deploy logs, confirm the TiDB URL/TLS options and migration privileges, then retry the deploy. Migrations preserve existing records; do not delete the `alembic_version` table to force a rerun.
-- **No PDF text:** scanned/image-based PDFs are not OCR'd by this code. Use a text-based PDF or paste the JD into the text box.
+- **No readable document text:** scanned/image-based documents are not OCR'd by this code. Use OCR, upload a text-based file, or paste the JD into the text box.
 - **Admin cannot sign in:** run `python -m scripts.create_admin` again to update the existing admin password, and ensure this command uses the same `TIDB_URL` / `DATABASE_URL` as Flask.
 
 ## 11. Publish with GitHub, Render, and Vercel
@@ -374,7 +374,7 @@ Render Free is intended for hobby/testing use, not production workloads. Its web
 
 **Folioport | Full-Stack AI Portfolio and Job Matcher**
 
-Built a React/Vite and Flask application with HttpOnly-cookie admin sessions and CSRF protection, scoped PDF/DOCX resume parsing, streamed AI portfolio Q&A, and public-data retrieval-augmented generation (RAG) using Qdrant. Implemented a deterministic job-fit scorer that separates explicit saved-skill matches from related vector/text evidence, normalizes available score components, and returns inspectable gaps and evidence. Added Alembic migrations, bounded database-backed reindex jobs, per-route rate limits, request monitoring, and offline tests for authentication, CRUD validation, migration paths, parsing edge cases, matcher behavior, prompt-injection boundaries, and RAG precision/recall fixtures.
+Built a React/Vite and Flask application with HttpOnly-cookie admin sessions and CSRF protection, scoped PDF/DOC/DOCX resume parsing, streamed AI portfolio Q&A, and public-data retrieval-augmented generation (RAG) using Qdrant. Implemented a deterministic job-fit scorer that separates explicit saved-skill matches from related vector/text evidence, normalizes available score components, and returns inspectable gaps and evidence. Added Alembic migrations, bounded database-backed reindex jobs, per-route rate limits, request monitoring, and offline tests for authentication, CRUD validation, migration paths, parsing edge cases, matcher behavior, prompt-injection boundaries, and RAG precision/recall fixtures.
 
 **Technologies:** Python, Flask, SQLAlchemy, React, Vite, Groq, Qdrant, FastEmbed, TiDB/MySQL, SQLite, JWT, unittest.
 

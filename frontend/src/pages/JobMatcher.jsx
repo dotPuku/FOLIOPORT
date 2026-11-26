@@ -43,7 +43,7 @@ export default function JobMatcher({ theme, setTheme }) {
 
   const analyze = async (event) => {
     event?.preventDefault();
-    if (!file && description.trim().length < 80) { setError('Paste a complete job description (at least 80 characters) or upload a PDF, DOCX, or TXT file.'); return; }
+    if (!file && description.trim().length < 80) { setError('Paste a complete job description (at least 80 characters) or upload a PDF, DOC, DOCX, or TXT file.'); return; }
     setBusy(true); setError(''); setResult(null);
     try {
       let data;
@@ -67,7 +67,7 @@ export default function JobMatcher({ theme, setTheme }) {
         <form className="jd-form" onSubmit={analyze}>
           <label className="field-label" htmlFor="job-description">Job description <span className="label-optional">Paste text or upload a document</span></label>
           <textarea id="job-description" className="jd-textarea" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Paste the full job description here — responsibilities, required skills, experience, education…" rows={11} maxLength={45000} disabled={Boolean(file)} />
-          <div className="jd-form-bottom"><span className="char-count">{description.length.toLocaleString()} / 45,000 characters</span><span className="or-divider">OR</span><button type="button" className="upload-trigger" onClick={() => fileInput.current?.click()}><UploadCloud size={17} /> Upload JD</button><input ref={fileInput} hidden type="file" accept=".txt,.pdf,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(e) => { const nextFile = e.target.files?.[0] || null; setFile(nextFile); setError(''); if (nextFile) setDescription(''); }} /></div>
+          <div className="jd-form-bottom"><span className="char-count">{description.length.toLocaleString()} / 45,000 characters</span><span className="or-divider">OR</span><button type="button" className="upload-trigger" onClick={() => fileInput.current?.click()}><UploadCloud size={17} /> Upload JD</button><input ref={fileInput} hidden type="file" accept=".txt,.pdf,.doc,.docx,text/plain,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(e) => { const nextFile = e.target.files?.[0] || null; setFile(nextFile); setError(''); if (nextFile) setDescription(''); }} /></div>
           {file && <div className="selected-file"><FileText size={16} /><span><strong>{file.name}</strong><small>{(file.size / 1024).toFixed(0)} KB · Ready to analyse</small></span><button type="button" aria-label="Remove file" className="icon-button small-icon" onClick={() => { setFile(null); if (fileInput.current) fileInput.current.value = ''; }}><X size={15} /></button></div>}
           <ToastStack><Toast message={error} type="error" onDismiss={() => setError('')} /></ToastStack>
           <div className="analyze-row"><span className="privacy-note"><Check size={14} /> No resume upload needed — your saved portfolio is used.</span><button type="submit" className="primary-button" disabled={busy}>{busy ? <><LoaderCircle className="spin" size={17} /> Analysing…</> : <>Analyse job fit <ArrowRight size={17} /></>}</button></div>
