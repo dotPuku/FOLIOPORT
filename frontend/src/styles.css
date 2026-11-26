@@ -3134,7 +3134,6 @@ pre,
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: 260px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
@@ -3211,8 +3210,7 @@ pre,
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
   line-clamp: 4;
-  overflow: hidden;
-  min-height: 4.8em
+  overflow: hidden
 }
 
 .record-evidence {
@@ -3235,8 +3233,7 @@ pre,
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   line-clamp: 3;
-  overflow: hidden;
-  min-height: 4.5em
+  overflow: hidden
 }
 
 .record-tag-list {
@@ -3326,7 +3323,7 @@ pre,
   justify-content: space-between;
   gap: 8px;
   border-top: 1px solid var(--border);
-  margin-top: auto;
+  margin-top: 13px;
   padding-top: 9px
 }
 
