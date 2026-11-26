@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 from flask import Flask
 
+from app.extensions import limiter
 from app.routes.chat import _completion_messages, _public_context, chat_bp
 from app.services.ai import AIServiceError
 from app.services.portfolio import all_searchable_records, profile_dict
@@ -14,6 +15,8 @@ from app.services.rag import retrieve, sync_entities
 class PublicChatContextTests(unittest.TestCase):
     def setUp(self):
         app = Flask(__name__)
+        app.config.update(RATELIMIT_ENABLED=False, RATELIMIT_STORAGE_URI="memory://")
+        limiter.init_app(app)
         app.register_blueprint(chat_bp, url_prefix="/api/chat")
         self.app = app
         self.client = app.test_client()
@@ -158,7 +161,7 @@ class PublicChatContextTests(unittest.TestCase):
             ],
             "education": [], "projects": [], "experience": [],
         }
-        with patch("app.services.portfolio.get_portfolio_bundle", return_value=bundle):
+        with patch(        "app.services.portfolio.get_portfolio_bundle", return_value=bundle):
             records = all_searchable_records(public_only=False)
 
         profile = next(record for record in records if record["kind"] == "profile")
@@ -304,9 +307,16 @@ class PublicChatContextTests(unittest.TestCase):
         self.assertEqual(query["query_filter"].must[0].key, "is_public")
         self.assertTrue(query["query_filter"].must[0].match.value)
         client.get_collections.assert_called_once()
-        client.create_payload_index.assert_called_once()
-        self.assertEqual(client.create_payload_index.call_args.kwargs["field_name"], "is_public")
-        self.assertEqual(client.create_payload_index.call_args.kwargs["field_schema"].value, "bool")
+        self.assertEqual(client.create_payload_index.call_count, 3)
+        indexed_fields = {
+            call.kwargs["field_name"]: call.kwargs["field_schema"].value
+            for call in client.create_payload_index.call_args_list
+        }
+        self.assertEqual(indexed_fields, {
+            "is_public": "bool",
+            "entity_kind": "keyword",
+            "entity_id": "keyword",
+        })
 
     def test_rag_results_deduplicate_chunks_from_the_same_entity(self):
         points = [
@@ -349,13 +359,17 @@ class PublicChatContextTests(unittest.TestCase):
         ]
 
         with self.app.app_context(), patch(
-            "app.services.rag.all_searchable_records", return_value=records
-        ), patch("app.services.rag._get_client", return_value=client), patch(
+            "app.services.rag.all_searchable_records", return_value=records[:1]
+        ) as searchable_records, patch("app.services.rag._get_client", return_value=client), patch(
             "app.services.rag._get_embedder", return_value=embedder
         ), patch("app.services.rag._ensure_collection"):
             result = sync_entities([("skill", 1)])
 
         self.assertEqual(result, {"indexed": 1, "warning": None})
+        searchable_records.assert_called_once_with(
+            public_only=False,
+            entity_keys={("skill", "1")},
+        )
         embedder.embed.assert_called_once_with(["Python skill"])
         client.delete.assert_called_once()
         self.assertEqual(len(client.upsert.call_args.kwargs["points"]), 1)

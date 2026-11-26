@@ -1,70 +1,12 @@
-import os
-from flask import Flask, jsonify, request
+import json
+import time
+from uuid import uuid4
+from flask import Flask, g, jsonify, request
 from flask_cors import CORS
-from sqlalchemy import inspect, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy import text
+from werkzeug.middleware.proxy_fix import ProxyFix
 from config import Config
-from .extensions import db, jwt
-
-
-def _ensure_current_schema(app):
-    """Add columns introduced after the initial database bootstrap."""
-    column_definitions = {
-        "skills": {"category": "VARCHAR(100) NULL"},
-        "education": {
-            "stream": "VARCHAR(180) NULL",
-            "grade_type": "VARCHAR(40) NULL",
-            "grade_value": "VARCHAR(100) NULL",
-        },
-    }
-    inspector = inspect(db.engine)
-    with db.engine.begin() as connection:
-        profile_columns = {column["name"] for column in inspector.get_columns("profile")}
-        if "about" in profile_columns:
-            try:
-                connection.execute(text("ALTER TABLE profile DROP COLUMN about"))
-            except OperationalError as exc:
-                if "1091" not in str(exc) and "doesn't exist" not in str(exc).lower():
-                    raise
-        for table, columns in column_definitions.items():
-            existing = {column["name"] for column in inspector.get_columns(table)}
-            for name, definition in columns.items():
-                if name not in existing:
-                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
-        if "type" in {column["name"] for column in inspector.get_columns("skills")}:
-            connection.execute(text(
-                "UPDATE skills SET category = type "
-                "WHERE (category IS NULL OR category = '') AND type IS NOT NULL"
-            ))
-        connection.execute(text("UPDATE skills SET category = 'Other' WHERE category IS NULL OR category = ''"))
-        education_columns = {column["name"] for column in inspector.get_columns("education")}
-        if "field_of_study" in education_columns:
-            connection.execute(text(
-                "UPDATE education SET stream = field_of_study "
-                "WHERE (stream IS NULL OR stream = '') AND field_of_study IS NOT NULL"
-            ))
-        if "grade" in education_columns:
-            connection.execute(text(
-                "UPDATE education SET grade_value = grade "
-                "WHERE (grade_value IS NULL OR grade_value = '') AND grade IS NOT NULL"
-            ))
-        connection.execute(text(
-            "UPDATE profile SET public_fields = JSON_REMOVE("
-            "public_fields, JSON_UNQUOTE(JSON_SEARCH(public_fields, 'one', 'about'))"
-            ") WHERE JSON_SEARCH(public_fields, 'one', 'about') IS NOT NULL"
-        ))
-        removable_columns = {
-            "skills": ("description", "keywords", "is_public"),
-            "education": ("field_of_study", "grade", "is_public"),
-            "projects": ("tagline", "status", "start_date", "end_date", "highlights", "is_public"),
-            "experience": ("is_public",),
-        }
-        for table, columns in removable_columns.items():
-            for name in columns:
-                existing = {column["name"] for column in inspect(db.engine).get_columns(table)}
-                if name in existing:
-                    connection.execute(text(f"ALTER TABLE {table} DROP COLUMN {name}"))
-        app.logger.info("Database schema compatibility check completed.")
+from .extensions import db, jwt, limiter, migrate
 
 
 def create_app(test_config=None):
@@ -73,36 +15,54 @@ def create_app(test_config=None):
     if test_config:
         app.config.update(test_config)
 
-    origins = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()]
+    if app.config.get("TRUST_PROXY"):
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+    configured_origins = app.config.get("CORS_ORIGINS", [])
+    if isinstance(configured_origins, str):
+        origins = [origin.strip() for origin in configured_origins.split(",") if origin.strip()]
+    else:
+        origins = [origin.strip() for origin in configured_origins if origin.strip()]
+    app.config["CORS_ORIGINS"] = origins
     CORS(
         app,
         resources={r"/api/*": {"origins": origins}},
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization"],
-        supports_credentials=False,
+        allow_headers=["Content-Type", "X-CSRF-TOKEN"],
+        expose_headers=["X-Request-ID", "X-Response-Time-ms", "Retry-After"],
+        supports_credentials=True,
     )
 
+    @app.before_request
+    def start_request_monitoring():
+        g.request_id = uuid4().hex
+        g.request_started_at = time.perf_counter()
+
     @app.after_request
-    def ensure_api_cors(response):
-        origin = request.headers.get("Origin")
-        if request.path.startswith("/api/") and origin in origins:
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers.add("Vary", "Origin")
-            if request.method == "OPTIONS":
-                requested_headers = {
-                    header.strip().lower()
-                    for header in request.headers.get("Access-Control-Request-Headers", "").split(",")
-                    if header.strip()
-                }
-                allowed_headers = {"content-type", "authorization"}
-                response.headers["Access-Control-Allow-Headers"] = ", ".join(
-                    sorted(requested_headers & allowed_headers)
-                )
-                response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    def record_request_metrics(response):
+        started_at = getattr(g, "request_started_at", time.perf_counter())
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        request_id = getattr(g, "request_id", uuid4().hex)
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Response-Time-ms"] = str(duration_ms)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        app.logger.info(
+            "api_request %s",
+            json.dumps({
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.path,
+                "status": response.status_code,
+                "duration_ms": duration_ms,
+            }, separators=(",", ":")),
+        )
         return response
 
     db.init_app(app)
     jwt.init_app(app)
+    migrate.init_app(app, db)
+    limiter.init_app(app)
 
     from .routes.auth import auth_bp
     from .routes.admin import admin_bp
@@ -123,12 +83,18 @@ def create_app(test_config=None):
                 connection.execute(text("SELECT 1"))
             result["database"] = "connected"
         except Exception:
-            result["database"] = "unavailable"
+            app.logger.exception("Health check could not reach the configured database.")
+            result.update(status="unavailable", database="unavailable")
+            return jsonify(result), 503
         return jsonify(result), 200
 
     @app.errorhandler(413)
     def too_large(_error):
         return jsonify({"error": "File is too large. Maximum upload size is configured in MAX_CONTENT_LENGTH_MB."}), 413
+
+    @app.errorhandler(429)
+    def rate_limited(_error):
+        return jsonify({"error": "Too many requests. Please wait before trying again."}), 429
 
     @app.errorhandler(404)
     def not_found(_error):
@@ -139,16 +105,5 @@ def create_app(test_config=None):
         db.session.rollback()
         app.logger.exception("Unhandled server error")
         return jsonify({"error": "An unexpected server error occurred."}), 500
-
-    with app.app_context():
-        # Models must be imported before create_all.
-        from . import models  # noqa: F401
-        db.create_all()
-        _ensure_current_schema(app)
-        # Seed the singleton profile so the public page always has a predictable shape.
-        from .models import Profile
-        if db.session.get(Profile, 1) is None:
-            db.session.add(Profile(id=1, full_name="Your Name", headline="Developer & Problem Solver"))
-            db.session.commit()
 
     return app

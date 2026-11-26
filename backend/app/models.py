@@ -96,4 +96,35 @@ class Experience(TimestampMixin, db.Model):
     tech_stack = db.Column(db.JSON, default=list, nullable=False)
 
 
+class ReindexJob(TimestampMixin, db.Model):
+    __tablename__ = "reindex_jobs"
+    id = db.Column(db.String(36), primary_key=True)
+    status = db.Column(db.String(20), nullable=False, default="queued", index=True)
+    total_entities = db.Column(db.Integer, nullable=False, default=0)
+    processed_entities = db.Column(db.Integer, nullable=False, default=0)
+    indexed_chunks = db.Column(db.Integer, nullable=False, default=0)
+    initialized = db.Column(db.Boolean, nullable=False, default=False)
+    error_message = db.Column(db.Text, default="")
+    started_at = db.Column(db.DateTime, nullable=True)
+    finished_at = db.Column(db.DateTime, nullable=True)
+
+
+class ReindexJobItem(db.Model):
+    __tablename__ = "reindex_job_items"
+    id = db.Column(db.Integer, primary_key=True)
+    job_id = db.Column(
+        db.String(36),
+        db.ForeignKey("reindex_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position = db.Column(db.Integer, nullable=False)
+    entity_kind = db.Column(db.String(20), nullable=False)
+    entity_id = db.Column(db.Integer, nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="queued")
+    __table_args__ = (
+        UniqueConstraint("job_id", "entity_kind", "entity_id"),
+        Index("ix_reindex_job_items_status", "job_id", "status", "position"),
+    )
+
+
 Index("ix_education_start_end", Education.start_year, Education.end_year)

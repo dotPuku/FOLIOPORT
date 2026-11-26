@@ -1,56 +1,70 @@
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000/api').replace(/\/$/, '');
+const DEFAULT_API_BASE = import.meta.env.PROD ? '/api' : 'http://127.0.0.1:5000/api';
+const API_BASE = (import.meta.env.VITE_API_URL || DEFAULT_API_BASE).replace(/\/$/, '');
+const CSRF_STORAGE_KEY = 'folioport_admin_csrf';
+const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
-export function getToken() {
-  return localStorage.getItem('folioport_admin_token');
+export function getCsrfToken() {
+  return typeof window === 'undefined' ? null : window.sessionStorage.getItem(CSRF_STORAGE_KEY);
 }
 
-export function setToken(token) {
-  if (token) localStorage.setItem('folioport_admin_token', token);
-  else localStorage.removeItem('folioport_admin_token');
+export function setCsrfToken(token) {
+  if (typeof window === 'undefined') return;
+  if (token) window.sessionStorage.setItem(CSRF_STORAGE_KEY, token);
+  else window.sessionStorage.removeItem(CSRF_STORAGE_KEY);
+}
+
+export function clearAuth() {
+  setCsrfToken(null);
 }
 
 export async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
-  const token = getToken();
-  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const method = (options.method || 'GET').toUpperCase();
+  const csrfToken = getCsrfToken();
+  if (MUTATION_METHODS.has(method) && csrfToken) headers.set('X-CSRF-TOKEN', csrfToken);
   let body = options.body;
   if (body !== undefined && !(body instanceof FormData) && typeof body !== 'string') {
     headers.set('Content-Type', 'application/json');
     body = JSON.stringify(body);
   }
   const response = await fetch(`${API_BASE}${path.startsWith('/') ? path : `/${path}`}`, {
-    ...options, headers, body,
+    ...options, method, headers, body, credentials: 'include',
   });
   const contentType = response.headers.get('content-type') || '';
   const payload = contentType.includes('application/json') ? await response.json() : await response.text();
   if (!response.ok) {
     const message = typeof payload === 'object' && payload?.error ? payload.error : `Request failed (${response.status}).`;
     if (response.status === 401 && !path.startsWith('/auth/login')) {
-      setToken(null);
+      clearAuth();
       if (typeof window !== 'undefined') window.dispatchEvent(new Event('folioport:auth-expired'));
     }
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
   return payload;
 }
 
 export async function apiStream(path, body, onToken, onStatus = () => {}) {
   const headers = new Headers({ 'Content-Type': 'application/json' });
-  const token = getToken();
-  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const csrfToken = getCsrfToken();
+  if (csrfToken) headers.set('X-CSRF-TOKEN', csrfToken);
   const response = await fetch(`${API_BASE}${path.startsWith('/') ? path : `/${path}`}`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
+    credentials: 'include',
   });
   if (!response.ok) {
     const contentType = response.headers.get('content-type') || '';
     const payload = contentType.includes('application/json') ? await response.json() : null;
     if (response.status === 401 && !path.startsWith('/auth/login')) {
-      setToken(null);
+      clearAuth();
       if (typeof window !== 'undefined') window.dispatchEvent(new Event('folioport:auth-expired'));
     }
-    throw new Error(payload?.error || `Request failed (${response.status}).`);
+    const error = new Error(payload?.error || `Request failed (${response.status}).`);
+    error.status = response.status;
+    throw error;
   }
   if (!response.body) throw new Error('The AI stream is unavailable in this browser.');
 

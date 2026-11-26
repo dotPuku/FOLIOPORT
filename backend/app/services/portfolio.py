@@ -29,18 +29,42 @@ def db_get_profile():
     return db.session.get(Profile, 1)
 
 
-def get_portfolio_bundle(public_only=False):
+def get_portfolio_bundle(public_only=False, entity_keys=None):
     from ..extensions import db
-    skills_query = Skill.query.order_by(Skill.category.asc(), Skill.name.asc())
-    education_query = Education.query.order_by(Education.start_year.desc())
-    projects_query = Project.query.order_by(Project.updated_at.desc())
-    experience_query = Experience.query.order_by(Experience.start_date.desc())
-    skills = skills_query.all()
-    education = education_query.all()
-    projects = projects_query.all()
-    experience = experience_query.all()
+
+    def load_entities(model, kind, query):
+        if entity_keys is None:
+            return query.all()
+        selected_ids = [
+            int(entity_id)
+            for entity_kind, entity_id in entity_keys
+            if entity_kind == kind
+        ]
+        return query.filter(model.id.in_(selected_ids)).all() if selected_ids else []
+
+    skills = load_entities(
+        Skill,
+        "skill",
+        Skill.query.order_by(Skill.category.asc(), Skill.name.asc()),
+    )
+    education = load_entities(
+        Education,
+        "education",
+        Education.query.order_by(Education.start_year.desc()),
+    )
+    projects = load_entities(
+        Project,
+        "project",
+        Project.query.order_by(Project.updated_at.desc()),
+    )
+    experience = load_entities(
+        Experience,
+        "experience",
+        Experience.query.order_by(Experience.start_date.desc()),
+    )
     from ..utils.serialization import serialize_skill, serialize_education, serialize_project, serialize_experience
-    profile = profile_dict(public_only=public_only)
+    profile_requested = entity_keys is None or ("profile", "1") in entity_keys
+    profile = profile_dict(public_only=public_only) if profile_requested else {}
     return {
         "profile": profile,
         "skills": [serialize_skill(item) for item in skills],
@@ -80,9 +104,11 @@ def _format_record(kind, title, fields):
     return "\n".join(lines)
 
 
-def all_searchable_records(public_only=False):
+def all_searchable_records(public_only=False, entity_keys=None):
     """Flatten every database category into grounded text chunks for retrieval / matching."""
-    bundle = get_portfolio_bundle(public_only=public_only)
+    if entity_keys is not None:
+        entity_keys = {(str(kind), str(entity_id)) for kind, entity_id in entity_keys}
+    bundle = get_portfolio_bundle(public_only=public_only, entity_keys=entity_keys)
     records = []
     p = bundle["profile"]
     if p:

@@ -6,7 +6,6 @@ import AdminLogin from './pages/AdminLogin';
 import AdminLayout from './pages/admin/AdminLayout';
 import ProfilePage from './pages/admin/ProfilePage';
 import RecordManager from './pages/admin/RecordManager';
-import { getToken } from './api';
 
 const adminSchemas = {
   skills: {
@@ -69,10 +68,6 @@ const adminSchemas = {
   },
 };
 
-function Protected({ children }) {
-  return getToken() ? children : <Navigate to="/admin/login" replace />;
-}
-
 function ThemeRoot({ children }) {
   const [theme, setTheme] = useState(() => localStorage.getItem('folioport_theme') || 'light');
   useEffect(() => {
@@ -92,7 +87,7 @@ export default function App() {
         <Route path="/" element={<PublicChat theme={theme} setTheme={setTheme} />} />
         <Route path="/jobmatcher" element={<JobMatcher theme={theme} setTheme={setTheme} />} />
         <Route path="/admin/login" element={<AdminLogin theme={theme} setTheme={setTheme} />} />
-        <Route path="/admin" element={<Protected><AdminLayout theme={theme} setTheme={setTheme} /></Protected>}>
+        <Route path="/admin" element={<AdminLayout theme={theme} setTheme={setTheme} />}>
           <Route index element={<Navigate to="profile" replace />} />
           <Route path="profile" element={<ProfilePage />} />
           {Object.entries(adminSchemas).map(([key, schema]) => <Route key={key} path={key} element={<RecordManager schema={schema} />} />)}

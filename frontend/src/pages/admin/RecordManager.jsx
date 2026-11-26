@@ -190,6 +190,11 @@ export default function RecordManager({ schema }) {
       setItems([]);
       setNotice(result.message || `All ${schema.title.toLowerCase()} deleted.`);
       if (result.index_warning) setError(result.index_warning);
+      if (result.reindex_job?.id) {
+        window.dispatchEvent(new CustomEvent('folioport:reindex-job', {
+          detail: { id: result.reindex_job.id },
+        }));
+      }
       try {
         await loadItems();
       } catch (err) {

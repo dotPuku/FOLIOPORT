@@ -47,12 +47,17 @@ def _ensure_collection(client, vector_size=None):
                 collection_name=name,
                 vectors_config=models.VectorParams(size=vector_size or 384, distance=models.Distance.COSINE),
             )
-        client.create_payload_index(
-            collection_name=name,
-            field_name="is_public",
-            field_schema=models.PayloadSchemaType.BOOL,
-            wait=True,
-        )
+        for field_name, schema in (
+            ("is_public", models.PayloadSchemaType.BOOL),
+            ("entity_kind", models.PayloadSchemaType.KEYWORD),
+            ("entity_id", models.PayloadSchemaType.KEYWORD),
+        ):
+            client.create_payload_index(
+                collection_name=name,
+                field_name=field_name,
+                field_schema=schema,
+                wait=True,
+            )
         _initialized_collections.add(cache_key)
 
 
@@ -100,10 +105,10 @@ def sync_entities(entities):
         entity_keys = {(str(kind), str(entity_id)) for kind, entity_id in entities}
         if not entity_keys:
             return {"indexed": 0, "warning": None}
-        records = [
-            record for record in all_searchable_records(public_only=False)
-            if (record["kind"], str(record["id"])) in entity_keys
-        ]
+        records = all_searchable_records(
+            public_only=False,
+            entity_keys=entity_keys,
+        )
         client = _get_client()
         points, texts, metadata = [], [], []
         for record in records:
@@ -139,6 +144,19 @@ def sync_entities(entities):
     except Exception as exc:  # keep CRUD durable when vector service is temporarily unavailable
         logger.warning("Qdrant index sync failed for %d entities: %s", len(entities), exc)
         return {"indexed": 0, "warning": "Portfolio data was saved, but its search index could not be refreshed. Retry from Admin → Reindex."}
+
+
+def clear_index():
+    """Prepare an empty collection before a durable reindex job processes its batches."""
+    client = _get_client()
+    vector = next(_get_embedder().embed(["Folioport search index initialization"])).tolist()
+    name = _collection_name()
+    existing = {collection.name for collection in client.get_collections().collections}
+    if name in existing:
+        client.delete_collection(collection_name=name)
+    with _collection_init_lock:
+        _initialized_collections.discard((id(client), name))
+    _ensure_collection(client, len(vector))
 
 
 def reindex_all():

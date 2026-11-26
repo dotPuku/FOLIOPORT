@@ -5,10 +5,12 @@ Folioport is a full-stack starter project with a ChatGPT-style public portfolio 
 ## What is included
 
 - **Frontend:** React, Vite, React Router, responsive CSS, light/dark black-and-white themes, Expletus Sans / Ubuntu / Philosopher / Fira Mono fonts.
-- **Backend:** Python + Flask REST API, Flask-SQLAlchemy, JWT-protected admin endpoints, password hashes, upload parsing, and validation.
+- **Backend:** Python + Flask REST API, Flask-SQLAlchemy, HttpOnly cookie sessions with CSRF protection, password hashes, upload parsing, and validation.
 - **SQL source of truth:** TiDB Cloud (MySQL-compatible). If you leave `DATABASE_URL` unset, a local SQLite database is used for quick UI development only.
 - **AI:** Groq chat completions, with system prompts for portfolio Q&A, job-description extraction, and career guidance.
-- **RAG:** Qdrant vector retrieval, local FastEmbed sentence embeddings, chunked portfolio records, public/private retrieval filtering, and manual reindexing.
+- **RAG:** Qdrant vector retrieval, local FastEmbed sentence embeddings, chunked portfolio records, indexed public/private filters, and a durable, bounded reindex queue.
+- **Database evolution:** Alembic migrations run before the Render web process starts and are also available as a local command.
+- **Operations:** Per-IP rate limits, JSON request timing logs, request IDs, and a database-aware health endpoint.
 - **Job matcher:** Accepts pasted text or `.txt`, `.pdf`, and `.docx` files. The language model extracts requirements; Python calculates the score from public portfolio records. A skill is an exact match only when it is listed in saved skills. Project, experience, and vector-search evidence is labelled related rather than treated as confirmed skill proficiency.
 - **Admin:** Profile, Skills, Education, Projects, and Experience pages. Each page includes a PDF/DOCX resume import that extracts only that page's fields for editable review. Existing records are retained; extracted records are appended, and non-empty profile fields are updated.
 
@@ -48,6 +50,8 @@ SECRET_KEY=use-a-long-random-secret
 JWT_SECRET_KEY=use-a-different-long-random-secret
 CORS_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
 TIDB_URL=mysql+pymysql://USERNAME:PASSWORD@TIDB_HOST:4000/DATABASE_NAME?ssl_verify_cert=true&ssl_verify_identity=true
+RATELIMIT_STORAGE_URI=memory://
+TRUST_PROXY=0
 GROQ_API_KEY=your-groq-api-key
 GROQ_MODEL=openai/gpt-oss-20b
 QDRANT_URL=https://your-cluster-id.region.cloud.qdrant.io:6333
@@ -60,9 +64,21 @@ EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 
 **Qdrant:** Folioport connects to Qdrant Cloud using `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION`. The configured `sentence-transformers/all-MiniLM-L6-v2` embedding model has 384 dimensions. The vector collection size is taken from generated vectors; if you change embedding models, rebuild the collection with **Rebuild index** so the stored vectors use one consistent model/size.
 
+`RATELIMIT_STORAGE_URI=memory://` is appropriate for the single Render Free instance, but counters are process-local and reset on restarts or spin-down. Use a shared Redis-compatible service if deploying multiple API instances or requiring limits that survive restarts. `TRUST_PROXY=0` is for local development; the Render Blueprint enables trusted proxy headers for client-IP rate limiting.
+
+### Apply schema migrations
+
+Run this after installing backend requirements and before starting Flask:
+
+```powershell
+python -m scripts.migrate_db
+```
+
+The migration command is repeatable. Its baseline creates missing tables without recreating existing ones, then the next revision adds the durable reindex queue and backfills known legacy skill/education fields. Existing portfolio rows are preserved; the baseline migration intentionally cannot be downgraded because it may represent pre-existing data.
+
 ### Create your private admin user
 
-Run this once after configuring the database:
+Run this after configuring the database. It applies pending migrations before creating or updating the account:
 
 ```bash
 python -m scripts.create_admin
@@ -73,6 +89,7 @@ Enter a username, email, and a password of at least 12 characters. Passwords are
 ### Start Flask
 
 ```bash
+python -m scripts.migrate_db
 python run.py
 ```
 
@@ -99,7 +116,7 @@ The Vite app is available at `http://127.0.0.1:5173`. In `frontend/.env`, set `V
 3. To import a resume, upload a text-based PDF or DOCX in **Profile**, then review and edit every parsed section before saving. Resume text and detected links are sent to the configured AI provider for extraction; the uploaded file is not stored. Scanned PDFs require OCR. Import does not change public visibility.
 4. Add Skills with a category, level, experience years, evidence, and aliases. Category suggestions are loaded from saved skill types with common defaults offered. Skills, education, projects, and experience are public portfolio records.
 5. Add Education, Projects, and Experience. Enter experience dates as `MM/YYYY` or full dates as `DD/MM/YYYY`. Use detailed descriptions, technologies, outcomes, GitHub/demo links, and evidence you can substantiate.
-6. Use **Rebuild index** in the admin sidebar after bulk updates or when Qdrant was offline during a save.
+6. Use **Rebuild index** in the admin sidebar after bulk updates or when Qdrant was offline during a save. It queues a database-backed job and processes five records per authenticated API request; the admin page can resume an unfinished job after reload.
 7. Visit `/` to use the public AI portfolio chat and `/jobmatcher` to analyse a job description.
 
 You need to enter your actual portfolio records through the admin pages; the application does not invent real profile information or include fake candidate data.
@@ -109,21 +126,26 @@ You need to enter your actual portfolio records through the admin pages; the app
 | Method | Endpoint | Access | Purpose |
 |---|---|---|---|
 | GET | `/api/health` | Public | API/database health check |
-| POST | `/api/auth/login` | Public | Admin login; returns an access token |
-| GET | `/api/auth/me` | Admin JWT | Current admin identity |
+| POST | `/api/auth/login` | Public | Admin login; sets a short-lived HttpOnly JWT cookie and returns a CSRF token |
+| GET | `/api/auth/me` | Admin cookie | Current admin identity |
+| GET | `/api/auth/csrf` | Admin cookie | Refresh the CSRF token after opening a new tab |
+| POST | `/api/auth/logout` | Admin cookie + CSRF | Clear the admin session cookie |
 | GET | `/api/public/portfolio` | Public | Public profile, skills, education, projects, experience |
 | POST | `/api/chat` | Public | Grounded portfolio question-answering |
 | POST | `/api/job-match` | Public | Analyse pasted JD or uploaded TXT/PDF/DOCX |
-| GET/PATCH | `/api/admin/profile` | Admin JWT | Read / save one profile field per request |
-| POST | `/api/admin/resume/parse` | Admin JWT | Parse uploaded PDF/DOCX into an editable, unsaved preview |
-| POST | `/api/admin/resume/import` | Admin JWT | Save reviewed profile details and append reviewed portfolio records |
-| GET/POST/PUT/DELETE | `/api/admin/skills` | Admin JWT | Skill CRUD |
-| GET/POST/PUT/DELETE | `/api/admin/education` | Admin JWT | Education CRUD |
-| GET/POST/PUT/DELETE | `/api/admin/projects` | Admin JWT | Project CRUD |
-| GET/POST/PUT/DELETE | `/api/admin/experience` | Admin JWT | Experience CRUD |
-| POST | `/api/admin/reindex` | Admin JWT | Rebuild the vector index |
+| GET/PATCH | `/api/admin/profile` | Admin cookie (+ CSRF for PATCH) | Read / save one profile field per request |
+| POST | `/api/admin/resume/parse` | Admin cookie + CSRF | Parse uploaded PDF/DOCX into an editable, unsaved preview |
+| POST | `/api/admin/resume/import` | Admin cookie + CSRF | Save reviewed profile details and append reviewed portfolio records |
+| GET/POST/PUT/DELETE | `/api/admin/skills` | Admin cookie (+ CSRF for writes) | Skill CRUD |
+| GET/POST/PUT/DELETE | `/api/admin/education` | Admin cookie (+ CSRF for writes) | Education CRUD |
+| GET/POST/PUT/DELETE | `/api/admin/projects` | Admin cookie (+ CSRF for writes) | Project CRUD |
+| GET/POST/PUT/DELETE | `/api/admin/experience` | Admin cookie (+ CSRF for writes) | Experience CRUD |
+| POST | `/api/admin/reindex` | Admin cookie + CSRF | Queue a rebuild or return the active job |
+| GET | `/api/admin/reindex/jobs/active` | Admin cookie | Find a queued/running rebuild |
+| GET | `/api/admin/reindex/jobs/<job_id>` | Admin cookie | Read rebuild progress |
+| POST | `/api/admin/reindex/jobs/<job_id>/process` | Admin cookie + CSRF | Process at most five records in one request |
 
-CRUD update/delete URLs append `/<record_id>`, e.g. `PUT /api/admin/projects/3`; `DELETE` on a collection URL removes all its records. All admin routes require `Authorization: Bearer <token>`.
+CRUD update/delete URLs append `/<record_id>`, e.g. `PUT /api/admin/projects/3`; `DELETE` on a collection URL removes all its records. Admin requests use credentialed cookies; mutations also require the `X-CSRF-TOKEN` header. The API does not return or store bearer tokens in browser storage.
 
 ## 6. How the application works
 
@@ -150,13 +172,21 @@ The estimate supports candidate preparation; it is not a hiring decision or pred
 
 ```text
 Browser (React/Vite)
-  ├─ Public chat ───────> Flask chat route ──> SQL portfolio + Qdrant ──> Groq streaming
-  ├─ Job description ──> Flask matcher ─────> Groq requirement extraction
-  │                                         └─> public SQL + Qdrant evidence ──> Python score/report
-  └─ Admin pages ──────> JWT-protected Flask routes ──> SQL writes ──> Qdrant sync
+  └─ /api/* ───────────> Vercel same-origin rewrite ──> Render Flask API
+                                                   ├─ Public chat ──> SQL + Qdrant ──> Groq stream
+                                                   ├─ Job match ────> Groq extraction + Python scoring
+                                                   └─ Admin ────────> HttpOnly cookie + CSRF ──> SQL/Qdrant
 ```
 
-SQL remains authoritative for all portfolio records. Vector indexing improves retrieval but is rebuildable; if indexing is unavailable, the admin API reports a warning and the user can reindex from the admin sidebar.
+The browser sends API calls to its own `/api/*` path. Vercel proxies those paths to Render, so the browser sees same-origin requests and the HttpOnly `SameSite=Lax` admin cookie works without custom domains. SQL remains authoritative for all portfolio records. Vector indexing improves retrieval but is rebuildable; if indexing is unavailable, the admin API reports a warning and the user can reindex from the admin sidebar.
+
+### Reindex job flow
+
+The admin API stores a `ReindexJob` and a snapshot of entity IDs in TiDB. The browser requests one batch at a time; each request processes no more than five records, updates job progress in SQL, and returns. This avoids requiring a persistent Render worker or one-off job, which are unavailable on Render Free. If the browser closes, the queued/running job remains in TiDB and the admin page resumes it on the next visit. Qdrant is cleared once before batches begin; while a rebuild is incomplete, public chat still has the SQL portfolio as its fallback context.
+
+### Schema migration flow
+
+`backend/migrations/versions/` contains the Alembic history. `python -m scripts.migrate_db` applies pending revisions and seeds the singleton profile if it does not exist. Render's start command runs that migration step before Gunicorn starts; local development and the admin-creation script use the same command. Do not edit deployed tables manually or reintroduce `db.create_all()` at application startup. For a schema change, edit the SQLAlchemy model, generate a revision with `python -m flask --app run:app db migrate -m "describe the change"`, review its `upgrade()` and `downgrade()` carefully, and test it against a disposable SQLite database before deploying to TiDB.
 
 ## 7. Repository map
 
@@ -167,6 +197,8 @@ backend/
     services/        AI, portfolio, RAG, resume parsing, matching
     models.py        SQLAlchemy data models
     utils/           serialization, text handling, validation
+  migrations/        Alembic environment and versioned schema changes
+  scripts/           admin setup, migrations, and manual reindex tooling
   tests/             unittest coverage for APIs, RAG, imports, and matching
   run.py             local API entry point
 frontend/
@@ -192,7 +224,7 @@ python -m unittest discover -s tests
 ```
 
 The suite includes offline regression cases for public/private context handling, hostile prompt text, empty-field filtering, resume import flows, matching classifications, score behavior, and overlap-safe experience dates. The RAG evaluation fixture computes context precision and recall on fixed retrieval cases. These tests validate those fixtures and deterministic code paths; they do **not** establish live-model accuracy, production retrieval quality, or hiring validity.
-Current verification: **36 backend tests passed** and `npm run build` completed successfully. The fixed RAG fixtures assert at least 0.8 context precision and recall; these are fixture thresholds, not a production accuracy claim.
+Current verification: **49 backend tests passed** and `npm run build` completed successfully. The fixed RAG fixtures assert at least 0.8 context precision and recall; these are fixture thresholds, not a production accuracy claim.
 
 Build the frontend from `frontend`:
 
@@ -203,12 +235,14 @@ npm run build
 ## 9. Key security and production notes
 
 - Keep all secrets in environment variables. Do not expose `GROQ_API_KEY`, TiDB credentials, or `QDRANT_API_KEY` in Vite variables.
-- Admin APIs use JWT authentication and hashed passwords; public pages do not expose admin write endpoints.
-- For production, serve everything over HTTPS, rotate strong `SECRET_KEY` and `JWT_SECRET_KEY`, add login rate-limiting and audit logging, set strict CORS origins, consider short-lived tokens with refresh/revocation, and move browser auth to secure HttpOnly cookies (requires matching CORS/CSRF design).
-- Add Alembic/Flask-Migrate schema migrations before evolving a production TiDB schema. `db.create_all()` is intentionally used only to bootstrap this starter and does not migrate existing tables.
-- Add request-rate limits to public AI endpoints, cost controls, monitoring, virus scanning for uploads, retention rules, and a privacy notice before opening to the public.
+- Admin sessions use an eight-hour JWT in an `HttpOnly`, `Secure` (outside debug), `SameSite=Lax` cookie. State-changing admin requests require a CSRF token in `X-CSRF-TOKEN`; the browser keeps only that non-authenticating token in session storage.
+- Production cookie login uses the Vercel `/api/*` rewrite to make browser requests same-origin. The browser talks to its Vercel hostname while Vercel proxies requests to Render; this works with the default `vercel.app` and `onrender.com` domains and does not require buying a custom domain.
+- CORS allows only the configured frontend origins and credentials. Set `CORS_ORIGINS` to the exact HTTPS frontend origin; never use `*` with cookies.
+- Flask-Limiter protects login (5/minute), chat (12/minute), job matching (10/minute), resume parsing (10/hour), and reindex processing (30/minute). Render Free uses in-memory counters; they are per process and reset on restarts/spin-down. Configure a shared Redis-compatible storage URI before scaling or relying on persistent limits.
+- The API logs structured request IDs, route, status, and request time to Render logs; chat separately logs retrieval and completion time. `/api/health` returns 503 when the SQL database cannot be reached. These are operational logs and health checks, not a hosted alerting/metrics service.
+- Alembic migrations run before Gunicorn starts. `db.create_all()` is reserved for isolated test setup; it is not the production migration mechanism.
 - Qdrant indexing after a database save is best-effort. If the vector provider is offline, SQL remains saved and the API returns an `index_warning`; rebuild from the admin sidebar when connectivity returns.
-- Add tests and error monitoring before real job applicants use this tool. Avoid using results as the sole basis for a hiring or employment decision.
+- Resume/JD parsing is text extraction only; scanned/image-only PDFs need OCR outside this project. Avoid using matcher results as the sole basis for a hiring or employment decision.
 
 ## 10. Common troubleshooting
 
@@ -216,6 +250,9 @@ npm run build
 - **AI not configured:** set `GROQ_API_KEY` in `backend/.env`, restart Flask, and verify `GROQ_MODEL` is currently available to your Groq account.
 - **Qdrant is unavailable:** check `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION`. Use the admin reindex action after reconnecting.
 - **CORS error:** set `CORS_ORIGINS` to the exact frontend origin including scheme and port, restart Flask, then hard-refresh the browser.
+- **Admin sign-in fails on hosted domains:** verify that the frontend uses its Vercel `/api` path, that `frontend/vercel.json` points to the correct Render service URL, and that Render's `CORS_ORIGINS` contains the exact Vercel production origin.
+- **Too many requests:** wait for the applicable rate-limit window to expire. Memory-backed counters reset when the Render service restarts.
+- **Migration error:** inspect Render deploy logs, confirm the TiDB URL/TLS options and migration privileges, then retry the deploy. Migrations preserve existing records; do not delete the `alembic_version` table to force a rerun.
 - **No PDF text:** scanned/image-based PDFs are not OCR'd by this code. Use a text-based PDF or paste the JD into the text box.
 - **Admin cannot sign in:** run `python -m scripts.create_admin` again to update the existing admin password, and ensure this command uses the same `TIDB_URL` / `DATABASE_URL` as Flask.
 
@@ -267,20 +304,20 @@ Folioport is a monorepo with a static React/Vite frontend and a Flask API. Rende
    | Variable | Value |
    | --- | --- |
    | `TIDB_URL` | Full TiDB SQLAlchemy URL, including the TLS query options from TiDB Cloud |
-   | `CORS_ORIGINS` | The exact expected Vercel origin, e.g. `https://your-project.vercel.app` (no trailing slash; correct it after Vercel creates the site if needed) |
+   | `CORS_ORIGINS` | Exact Vercel production origin, e.g. `https://your-project.vercel.app` (no trailing slash) |
    | `GROQ_API_KEY` | Secret key from Groq |
    | `QDRANT_URL` | Qdrant Cloud cluster URL |
    | `QDRANT_API_KEY` | Secret key from Qdrant Cloud |
 
    Render generates `SECRET_KEY` and `JWT_SECRET_KEY`; do not replace them with weak or shared values. The Blueprint selects the Free plan, sets `FLASK_DEBUG=0`, Python 3.12, the model defaults, one Gunicorn worker, and `/api/health` as its health-check path.
-3. **Configure TiDB before the first successful app start.** This project runs its schema bootstrap at startup and has MySQL/TiDB-specific schema compatibility SQL. Do not rely on Render's ephemeral local disk/SQLite for production data, and do not substitute a Render PostgreSQL URL. Use a TiDB Cloud database and the exact TLS-enabled connection string. URL-encode special characters in the username/password.
+3. **Configure TiDB before the first successful app start.** Render applies the Alembic migrations before starting Gunicorn. Do not rely on Render's ephemeral local disk/SQLite for production data, and do not substitute a Render PostgreSQL URL. Use a TiDB Cloud database and the exact TLS-enabled connection string. URL-encode special characters in the username/password.
 4. Wait for the first deployment to complete. Copy the service URL, for example `https://folioport-api.onrender.com`, and open:
 
    ```text
    https://YOUR-RENDER-SERVICE.onrender.com/api/health
    ```
 
-   Confirm the JSON reports `"database": "connected"`. If the service fails to start, inspect Render's deploy logs first, then verify the database URL/TLS and required environment variables.
+   Confirm the JSON reports `"database": "connected"`. The Render URL is the upstream used by the Vercel API rewrite.
 5. Render Free has no Shell/SSH access or one-off jobs, so create the admin account from your computer against the **same TiDB database** used by Render. In PowerShell, open the backend folder, enter the URL at the prompt, and run the existing script:
 
    ```powershell
@@ -305,25 +342,26 @@ Folioport is a monorepo with a static React/Vite frontend and a Flask API. Rende
    - Build command: `npm run build`
    - Output directory: `dist`
    - Install command: `npm install` (or Vercel's detected npm install)
-3. Add this environment variable for **Production** (and Preview only if you intend to use previews):
+3. Add this environment variable for **Production**:
 
    ```text
-   VITE_API_URL=https://YOUR-RENDER-SERVICE.onrender.com/api
+   VITE_API_URL=/api
    ```
 
-   This value is compiled into public browser code; it must contain only the API base URL. Never add Groq, TiDB, Qdrant, or admin credentials to Vercel.
-4. Deploy. Visit the generated Vercel URL and refresh `/jobmatcher` and `/admin/login` directly. The included `frontend/vercel.json` rewrite supports these client-side routes.
-5. Copy the final Vercel production origin (scheme + domain only, no path or trailing slash) into Render's `CORS_ORIGINS`. Save the environment change and redeploy/restart the Render service. The backend checks exact origins; wildcard Vercel preview domains are not accepted by this project. For a preview, add that specific preview URL to `CORS_ORIGINS` or test against production only.
-6. Pushes to the connected GitHub branch trigger deployments. Vercel can create preview deployments for pull requests; Render deploys pushes to its selected branch. After changing `VITE_API_URL` in Vercel, trigger a new Vercel deployment because Vite embeds it at build time.
+   The production API base is the same-origin `/api` path. Do not set it to the Render URL; `frontend/vercel.json` proxies `/api/*` to `https://folioport-api.onrender.com/api/*`. If Render assigns a different service URL, update that rewrite destination and redeploy Vercel. Never add Groq, TiDB, Qdrant, or admin credentials to Vercel.
+4. Deploy. Visit the generated Vercel URL, refresh `/jobmatcher`, and sign into `/admin/login`. The included rewrite sends API requests to Render and routes other paths back to the SPA entry point.
+5. Set Render's `CORS_ORIGINS` to the exact Vercel production origin, such as `https://dotpuku.vercel.app` (no trailing slash). Save and restart/redeploy the Render service. Use the actual Vercel production URL if it differs.
+6. Visit the Vercel site, refresh `/jobmatcher`, sign into `/admin/login`, and try a public chat and job match. The browser stays on the Vercel origin for API calls, so the HttpOnly cookie is first-party; no custom domain is needed. Vercel preview deployments may require their exact preview origin in `CORS_ORIGINS` if you want to test API calls from previews.
+7. Pushes to the connected GitHub branch trigger deployments. Vercel can create preview deployments for pull requests; Render deploys pushes to its selected branch.
 
 ### Render Free limits and post-deploy checks
 
 Render Free is intended for hobby/testing use, not production workloads. Its web service has 0.1 CPU and 512 MB RAM, spins down after 15 minutes without inbound traffic, and can take about a minute to wake when the next request arrives. Free services share a 750-hour monthly allowance per workspace; exhausting it suspends Free services until the next month. The filesystem is ephemeral, with no persistent disk, Shell/SSH, or one-off job support. The Blueprint uses one Gunicorn worker to limit memory use and a longer request timeout for cold model initialization. Do not store portfolio data or SQLite databases on Render's filesystem. TiDB and Qdrant remain external hosted services; check their own pricing and limits.
 
 - Open the Render `/api/health` URL and verify `database` is `connected`.
-- Open the Vercel site, refresh `/jobmatcher`, sign into `/admin/login`, and try a public chat and job match.
-- In browser developer tools, a CORS error usually means `CORS_ORIGINS` is missing the exact Vercel origin, has a trailing slash, or Render has not restarted since the change.
-- A frontend request to `127.0.0.1:5000` means `VITE_API_URL` was missing/wrong at Vercel build time; fix it and redeploy.
+- Open the Vercel frontend, refresh `/jobmatcher`, sign into `/admin/login`, and try a public chat and job match.
+- In browser developer tools, a CORS error usually means `CORS_ORIGINS` is missing the exact Vercel production origin, has a trailing slash, or Render has not restarted since the change.
+- A failed request to `/api/*` may mean the Render service URL in `frontend/vercel.json` is wrong; correct the rewrite destination and redeploy Vercel.
 - A 503 from AI or matching endpoints usually means Groq or Qdrant credentials/configuration are missing or invalid. Check Render logs; keep provider keys only in Render's environment settings.
 - If Render logs show the process being killed or out-of-memory errors while FastEmbed initializes, the Free plan's 512 MB limit is insufficient for that workload; reduce usage or move embedding generation off the web process/upgrade the service rather than repeatedly restarting it.
 - If admin login fails, confirm the account was created against the same TiDB database used by the Render service.
@@ -342,14 +380,10 @@ Render Free is intended for hobby/testing use, not production workloads. Its web
 
 **Folioport | Full-Stack AI Portfolio and Job Matcher**
 
-Built a React/Vite and Flask application with JWT-protected portfolio administration, scoped PDF/DOCX resume parsing, streamed AI portfolio Q&A, and public-data retrieval-augmented generation (RAG) using Qdrant. Implemented a deterministic job-fit scorer that separates explicit saved-skill matches from related vector/text evidence, normalizes available score components, and returns inspectable gaps and evidence. Added offline tests for matcher classification/scoring, public-data isolation, prompt-injection boundaries, and RAG context precision/recall fixtures; verified 36 backend tests and a production frontend build.
+Built a React/Vite and Flask application with HttpOnly-cookie admin sessions and CSRF protection, scoped PDF/DOCX resume parsing, streamed AI portfolio Q&A, and public-data retrieval-augmented generation (RAG) using Qdrant. Implemented a deterministic job-fit scorer that separates explicit saved-skill matches from related vector/text evidence, normalizes available score components, and returns inspectable gaps and evidence. Added Alembic migrations, bounded database-backed reindex jobs, per-route rate limits, request monitoring, and offline tests for authentication, CRUD validation, migration paths, parsing edge cases, matcher behavior, prompt-injection boundaries, and RAG precision/recall fixtures.
 
 **Technologies:** Python, Flask, SQLAlchemy, React, Vite, Groq, Qdrant, FastEmbed, TiDB/MySQL, SQLite, JWT, unittest.
 
-## 13. Suggested next improvements
+## 13. Possible future enhancements
 
-1. Expand automated coverage for authentication, CRUD validation, and additional real-world resume/JD parsing edge cases.
-2. Add Alembic migrations and a dedicated reindex job/queue for large portfolios.
-3. Add chat conversation export, citations linking to individual portfolio records, and an admin preview of exactly what the public sees.
-4. Add user-defined weights, role-specific résumé tailoring, export-to-PDF, and a side-by-side JD evidence table.
-5. Add rate limiting, monitoring, expanded prompt-injection evaluation, secure cookie auth, backups/restore, and deployment automation for additional hosting providers.
+Potential extensions beyond the implemented scope include citations linking answers to individual portfolio records, a public-portfolio preview in the admin UI, configurable job-match weights, résumé export, expanded live-provider evaluation, and automated database backup/restore drills.

@@ -2,11 +2,13 @@ from flask import Blueprint, request, jsonify
 from ..services.matching import analyze_job
 from ..services.document_parser import parse_uploaded_file, DocumentParseError
 from ..services.ai import AIServiceError
+from ..extensions import limiter
 
 matcher_bp = Blueprint("job_matcher", __name__)
 
 
 @matcher_bp.post("")
+@limiter.limit("10 per minute")
 def match_job():
     uploaded = request.files.get("file")
     description = request.form.get("job_description", "") if request.content_type and request.content_type.startswith("multipart/form-data") else (request.get_json(silent=True) or {}).get("job_description", "")

@@ -6,6 +6,7 @@ from ..services.ai import completion, completion_stream, AIServiceError
 from ..services.prompts import PORTFOLIO_ASSISTANT_SYSTEM
 from ..services.portfolio import get_portfolio_bundle, remove_empty_values
 from ..services.rag import retrieve
+from ..extensions import limiter
 
 chat_bp = Blueprint("chat", __name__)
 _ALL_CONTEXT_SECTIONS = ("profile", "skills", "education", "projects", "experience")
@@ -120,6 +121,7 @@ def _clean_retrieved_text(text):
 
 
 @chat_bp.post("")
+@limiter.limit("12 per minute")
 def chat():
     body = request.get_json(silent=True) or {}
     messages = body.get("messages")

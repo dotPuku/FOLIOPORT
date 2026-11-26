@@ -1,18 +1,29 @@
 import re
 from datetime import datetime
+from uuid import uuid4
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required
-from sqlalchemy import func
-from ..extensions import db
-from ..models import Profile, Skill, Education, Project, Experience
+from sqlalchemy import select
+from ..extensions import db, limiter
+from ..models import (
+    Education,
+    Experience,
+    Profile,
+    Project,
+    ReindexJob,
+    ReindexJobItem,
+    Skill,
+    utcnow,
+)
 from ..utils.serialization import serialize_profile, serialize_skill, serialize_education, serialize_project, serialize_experience
 from ..utils.text import clean_string, safe_list
 from ..services.ai import AIServiceError
 from ..services.document_parser import DocumentParseError, parse_uploaded_resume
 from ..services.resume_import import extract_resume_data
-from ..services.rag import sync_entity, sync_entities, reindex_all
+from ..services.rag import clear_index, sync_entity, sync_entities
 
 admin_bp = Blueprint("admin", __name__)
+REINDEX_BATCH_SIZE = 5
 
 PROFILE_EDITABLE = {
     "full_name": (160, False), "headline": (220, False), "phone": (40, False), "email": (255, False),
@@ -20,6 +31,66 @@ PROFILE_EDITABLE = {
     "resume_url": (500, False), "location": (180, False), "objective": (5000, False),
     "preferred_roles": (1000, False), "years_experience": (0, True), "availability": (120, False),
 }
+
+
+def _serialize_reindex_job(job):
+    if job.total_entities:
+        progress = round(job.processed_entities * 100 / job.total_entities)
+    else:
+        progress = 100 if job.status == "completed" else 0
+    return {
+        "id": job.id,
+        "status": job.status,
+        "total_entities": job.total_entities,
+        "processed_entities": job.processed_entities,
+        "indexed_chunks": job.indexed_chunks,
+        "progress": progress,
+        "error": job.error_message or None,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+    }
+
+
+def _enqueue_reindex_job():
+    active_job = ReindexJob.query.filter(
+        ReindexJob.status.in_(("queued", "running"))
+    ).order_by(ReindexJob.created_at.desc()).first()
+    if active_job:
+        return active_job, False
+
+    job = ReindexJob(id=str(uuid4()), status="queued")
+    db.session.add(job)
+    entities = []
+    if db.session.get(Profile, 1) is not None:
+        entities.append(("profile", 1))
+    for kind, model in (
+        ("skill", Skill),
+        ("education", Education),
+        ("project", Project),
+        ("experience", Experience),
+    ):
+        entity_ids = db.session.scalars(select(model.id).order_by(model.id)).all()
+        entities.extend((kind, entity_id) for entity_id in entity_ids)
+    db.session.add_all([
+        ReindexJobItem(
+            job_id=job.id,
+            position=position,
+            entity_kind=kind,
+            entity_id=entity_id,
+            status="queued",
+        )
+        for position, (kind, entity_id) in enumerate(entities)
+    ])
+    job.total_entities = len(entities)
+    db.session.commit()
+    return job, True
+
+
+def _active_reindex_job():
+    return ReindexJob.query.filter(
+        ReindexJob.status.in_(("queued", "running"))
+    ).order_by(ReindexJob.created_at.desc()).first()
 
 
 def _payload():
@@ -162,6 +233,7 @@ def patch_profile():
 
 @admin_bp.post("/resume/parse")
 @jwt_required()
+@limiter.limit("10 per hour")
 def parse_resume():
     uploaded = request.files.get("file")
     if not uploaded or not uploaded.filename:
@@ -420,15 +492,18 @@ def _crud_routes(resource, model, serializer, fields, *, required=(), list_field
             current_app.logger.exception("Bulk delete failed for %s.", resource)
             return jsonify({"error": f"Could not delete all {resource} records."}), 500
         index_warning = None
+        job = None
         try:
-            reindex_all()
+            job, _ = _enqueue_reindex_job()
         except Exception:
-            current_app.logger.exception("Records were deleted from %s, but Qdrant reindex failed.", resource)
-            index_warning = "Records were deleted, but the search index could not be refreshed. Retry from Admin → Reindex."
+            db.session.rollback()
+            current_app.logger.exception("Records were deleted from %s, but the reindex job could not be queued.", resource)
+            index_warning = "Records were deleted, but the search index refresh could not be queued. Retry from Admin → Rebuild index."
         return jsonify({
             "message": f"Deleted {deleted} {resource} record(s).",
             "deleted": deleted,
             "index_warning": index_warning,
+            "reindex_job": _serialize_reindex_job(job) if job else None,
         })
 
 
@@ -450,8 +525,98 @@ _crud_routes("experience", Experience, serialize_experience,
 @jwt_required()
 def run_reindex():
     try:
-        return jsonify({"message": "Portfolio search index rebuilt.", **reindex_all()})
+        job, created = _enqueue_reindex_job()
+        return jsonify({
+            "message": "Reindex job queued." if created else "An existing reindex job is already active.",
+            "job": _serialize_reindex_job(job),
+            "batch_size": REINDEX_BATCH_SIZE,
+        }), 202 if created else 200
     except Exception as exc:
-        from flask import current_app
         current_app.logger.exception("Manual vector reindex failed")
-        return jsonify({"error": "Could not rebuild the Qdrant index. Check Qdrant connectivity and embedding model configuration."}), 503
+        return jsonify({"error": "Could not queue a search index rebuild."}), 503
+
+
+@admin_bp.get("/reindex/jobs/active")
+@jwt_required()
+def active_reindex_job():
+    job = _active_reindex_job()
+    return jsonify({
+        "job": _serialize_reindex_job(job) if job else None,
+        "batch_size": REINDEX_BATCH_SIZE,
+    })
+
+
+@admin_bp.get("/reindex/jobs/<string:job_id>")
+@jwt_required()
+def get_reindex_job(job_id):
+    job = db.session.get(ReindexJob, job_id)
+    if job is None:
+        return jsonify({"error": "Reindex job not found."}), 404
+    return jsonify({"job": _serialize_reindex_job(job)})
+
+
+@admin_bp.post("/reindex/jobs/<string:job_id>/process")
+@jwt_required()
+@limiter.limit("30 per minute")
+def process_reindex_job(job_id):
+    job = db.session.execute(
+        select(ReindexJob).where(ReindexJob.id == job_id).with_for_update()
+    ).scalar_one_or_none()
+    if job is None:
+        return jsonify({"error": "Reindex job not found."}), 404
+    if job.status in {"completed", "failed"}:
+        return jsonify({"job": _serialize_reindex_job(job), "batch_size": REINDEX_BATCH_SIZE})
+
+    try:
+        if not job.initialized:
+            job.status = "running"
+            job.started_at = utcnow()
+            clear_index()
+            job.initialized = True
+
+        items = db.session.execute(
+            select(ReindexJobItem)
+            .where(
+                ReindexJobItem.job_id == job.id,
+                ReindexJobItem.status == "queued",
+            )
+            .order_by(ReindexJobItem.position)
+            .limit(REINDEX_BATCH_SIZE)
+            .with_for_update()
+        ).scalars().all()
+
+        if items:
+            result = sync_entities([
+                (item.entity_kind, item.entity_id)
+                for item in items
+            ])
+            if result.get("warning"):
+                raise RuntimeError(result["warning"])
+            for item in items:
+                item.status = "completed"
+            job.processed_entities += len(items)
+            job.indexed_chunks += result.get("indexed", 0)
+
+        if job.processed_entities >= job.total_entities:
+            job.status = "completed"
+            job.finished_at = utcnow()
+        else:
+            job.status = "running"
+        db.session.commit()
+        return jsonify({"job": _serialize_reindex_job(job), "batch_size": REINDEX_BATCH_SIZE})
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Reindex job %s failed while processing a batch.", job_id)
+        failed_job = db.session.get(ReindexJob, job_id)
+        if failed_job:
+            failed_job.status = "failed"
+            failed_job.error_message = (
+                "The search index rebuild failed. Check Qdrant connectivity and the embedding model configuration."
+            )
+            failed_job.finished_at = utcnow()
+            db.session.commit()
+            return jsonify({
+                "error": failed_job.error_message,
+                "job": _serialize_reindex_job(failed_job),
+            }), 503
+        return jsonify({"error": "The reindex job could not be updated after a failure."}), 503
