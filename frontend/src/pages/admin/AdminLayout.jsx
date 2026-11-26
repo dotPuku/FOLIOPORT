@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { BriefcaseBusiness, Code2, GraduationCap, LogOut, Menu, Moon, RefreshCw, Sun, UserRound, X, Zap } from 'lucide-react';
+import { BriefcaseBusiness, Code2, GraduationCap, LogOut, Menu, Moon, RefreshCw, Sun, UserRound, Zap } from 'lucide-react';
 import { api, clearAuth, setCsrfToken } from '../../api';
 import Toast, { ToastStack } from '../../components/Toast';
 
@@ -136,7 +136,7 @@ export default function AdminLayout({ theme, setTheme }) {
 
   return <div className="admin-shell">
     <aside className={`admin-sidebar ${mobileOpen ? 'admin-sidebar-open' : ''}`}>
-      <div className="admin-brand-row"><Link to="/admin/profile" className="brand-lockup" onClick={() => setMobileOpen(false)}><span className="brand-mark">f.</span><span>folioport</span></Link><span className="admin-badge">ADMIN</span><button className="icon-button mobile-only" onClick={() => setMobileOpen(false)} aria-label="Close admin navigation"><X size={17} /></button></div>
+      <div className="admin-brand-row"><Link to="/admin/profile" className="brand-lockup" onClick={() => setMobileOpen(false)}><span className="brand-mark">f.</span><span>folioport</span></Link><span className="admin-badge">ADMIN</span></div>
       <nav className="admin-nav">{nav.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} onClick={() => setMobileOpen(false)} className={({ isActive }) => `admin-nav-link ${isActive ? 'active' : ''}`}><Icon size={17} /><span>{label}</span></NavLink>)}</nav>
       <div className="admin-sidebar-spacer" />
       <div className="index-status-card"><div className="index-status-top"><span className="index-status-icon"><RefreshCw size={15} /></span><strong>Search index</strong></div><p>Rebuilds Qdrant in five-record API batches and can resume after this page reloads.</p><button onClick={reindex} disabled={reindexing}>{reindexing ? <RefreshCw size={13} className="spin" /> : <RefreshCw size={13} />}{reindexing ? 'Refreshing…' : 'Rebuild index'}</button></div>

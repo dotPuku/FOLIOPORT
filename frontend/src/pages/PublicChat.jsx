@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowDown, ArrowUp, BriefcaseBusiness, ChevronDown, CircleHelp, LoaderCircle, Menu, MessageCircle, Moon, Plus, Sun, UserRound, X, Sparkles } from 'lucide-react';
+import { ArrowDown, ArrowUp, BriefcaseBusiness, CircleHelp, LoaderCircle, Menu, MessageCircle, Moon, Plus, Sun, UserRound, X, Sparkles } from 'lucide-react';
 import { api, apiStream } from '../api';
 import Toast, { ToastStack } from '../components/Toast';
 
@@ -29,9 +29,11 @@ export default function PublicChat({ theme, setTheme }) {
   const [profile, setProfile] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showScrollDown, setShowScrollDown] = useState(false);
+  const [headerVisible, setHeaderVisible] = useState(true);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
+  const lastScrollTopRef = useRef(0);
 
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeId) || null, [chats, activeId]);
   const messages = activeChat?.messages || [];
@@ -96,6 +98,14 @@ export default function PublicChat({ theme, setTheme }) {
     if (activeId === id) setActiveId(next[0]?.id || null);
   };
 
+  const handleChatScroll = (event) => {
+    const scrollTop = event.currentTarget.scrollTop;
+    const scrollDelta = scrollTop - lastScrollTopRef.current;
+    if (scrollTop <= 8) setHeaderVisible(true);
+    else if (Math.abs(scrollDelta) >= 4) setHeaderVisible(scrollDelta < 0);
+    lastScrollTopRef.current = scrollTop;
+  };
+
   return (
     <div className="public-shell">
       <aside className={`public-sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
@@ -103,7 +113,6 @@ export default function PublicChat({ theme, setTheme }) {
           <Link to="/" className="brand-lockup" onClick={() => setSidebarOpen(false)}>
             <span className="brand-mark">f.</span><span>folioport</span>
           </Link>
-          <button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)} aria-label="Close menu"><X size={18} /></button>
         </div>
         <button className="new-chat-button" onClick={newChat}><Plus size={17} /> New conversation</button>
         <div className="sidebar-section-label">YOUR CONVERSATIONS</div>
@@ -128,10 +137,10 @@ export default function PublicChat({ theme, setTheme }) {
       {sidebarOpen && <button className="sidebar-scrim" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
       <main className="chat-main">
         <ToastStack><Toast message={error} type="error" onDismiss={() => setError('')} /></ToastStack>
-        <header className="chat-topbar">
+        <header className={`chat-topbar ${headerVisible ? '' : 'chat-topbar-hidden'}`}>
           <div className="topbar-left">
             <button className="icon-button mobile-only" onClick={() => setSidebarOpen(true)} aria-label="Open menu"><Menu size={20} /></button>
-            <div className="model-switcher">FOLIOPORT AI <ChevronDown size={14} /></div>
+            <div className="model-switcher">FOLIOPORT AI</div>
           </div>
           <div className="topbar-right">
             <Link className="topbar-job-link" to="/jobmatcher"><BriefcaseBusiness size={15} /> Job matcher</Link>
@@ -139,7 +148,7 @@ export default function PublicChat({ theme, setTheme }) {
           </div>
         </header>
 
-        <section className={`chat-content ${messages.length ? 'has-messages' : 'welcome-content'}`} ref={scrollRef}>
+        <section className={`chat-content ${messages.length ? 'has-messages' : 'welcome-content'}`} ref={scrollRef} onScroll={handleChatScroll}>
           {messages.length === 0 ? (
             <div className="welcome-panel">
               <div className="welcome-symbol">f.</div>

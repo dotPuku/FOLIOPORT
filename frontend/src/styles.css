@@ -600,7 +600,18 @@ pre,
   justify-content: space-between;
   padding: 0 24px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg)
+  background: var(--bg);
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 20;
+  transition: transform .22s ease
+}
+
+.chat-topbar.chat-topbar-hidden {
+  transform: translateY(calc(-100% - 1px));
+  pointer-events: none
 }
 
 .topbar-left,
@@ -616,10 +627,6 @@ pre,
   gap: 7px;
   font: 700 13px var(--fontBrand);
   letter-spacing: .025em
-}
-
-.model-switcher svg {
-  color: var(--muted)
 }
 
 .topbar-job-link {
@@ -653,7 +660,7 @@ pre,
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 28px 28px 22px
+  padding: 86px 28px 22px
 }
 
 .welcome-panel {
@@ -741,7 +748,7 @@ pre,
 }
 
 .has-messages {
-  padding: 24px 26px 12px
+  padding: 82px 26px 12px
 }
 
 .message-thread {
@@ -2670,7 +2677,8 @@ pre,
 .profile-field-editor {
   min-width: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
+  flex-wrap: nowrap;
   gap: 9px
 }
 
@@ -2719,10 +2727,13 @@ pre,
   display: inline-flex;
   align-items: center;
   min-height: 37px;
+  max-width: 150px;
   padding: 0 2px;
   color: var(--muted);
   font: 11px var(--fontBrand);
-  white-space: nowrap
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis
 }
 
 .profile-field-editor input:focus,
@@ -2735,12 +2746,28 @@ pre,
   display: flex;
   align-items: center;
   gap: 5px;
-  padding-top: 2px
+  flex: 0 0 auto
 }
 
 .profile-edit-action {
   background: var(--surface-2);
   border-color: var(--border)
+}
+
+.profile-row-action {
+  width: 35px;
+  height: 35px;
+  border-color: var(--border);
+  background: var(--surface-2)
+}
+
+.profile-cancel-action {
+  color: var(--text-2)
+}
+
+.profile-field-actions .primary-small-action {
+  min-height: 35px;
+  white-space: nowrap
 }
 
 .profile-visibility-action {
@@ -3353,11 +3380,7 @@ pre,
   }
 
   .profile-field-editor {
-    flex-wrap: wrap
-  }
-
-  .profile-field-actions {
-    margin-left: auto
+    gap: 7px
   }
 
   .record-card-list {
@@ -3406,7 +3429,7 @@ pre,
   }
 
   .welcome-content {
-    padding: 30px 20px
+    padding: 88px 20px 30px
   }
 
   .composer-dock {
@@ -3462,10 +3485,6 @@ pre,
 
   .profile-field-editor {
     flex-wrap: nowrap
-  }
-
-  .admin-brand-row .mobile-only {
-    margin-left: auto
   }
 
   .matcher-container {
@@ -3560,11 +3579,11 @@ pre,
   }
 
   .has-messages {
-    padding: 16px 12px 8px
+    padding: 70px 12px 8px
   }
 
   .welcome-content {
-    padding: 20px 15px
+    padding: 74px 15px 20px
   }
 
   .composer-box {
@@ -3815,18 +3834,30 @@ pre,
   }
 
   .profile-field-editor {
-    flex-wrap: wrap
+    flex-wrap: nowrap;
+    gap: 6px
   }
 
   .profile-field-editor input,
   .profile-field-editor textarea {
-    width: 100%;
-    flex-basis: 100%
+    width: auto;
+    flex: 1 1 0;
+    flex-basis: 0
   }
 
   .profile-field-actions {
-    width: 100%;
-    justify-content: flex-end
+    width: auto;
+    gap: 4px;
+    justify-content: flex-start
+  }
+
+  .profile-row-action {
+    width: 33px;
+    height: 33px
+  }
+
+  .profile-url-prefix {
+    max-width: 105px
   }
 
   .record-form-card {
@@ -3944,20 +3975,36 @@ pre,
 }
 
 .record-form-modal {
+  display: flex;
+  flex-direction: column;
   width: min(760px, 100%);
   max-height: calc(100dvh - 40px);
-  overflow: auto;
+  overflow: hidden;
   margin: 0;
   box-shadow: 0 24px 80px rgba(0, 0, 0, .28);
   transform: translateZ(0)
 }
 
 .record-form-modal .record-form-heading {
-  position: sticky;
-  top: -1px;
-  z-index: 2;
-  background: var(--surface);
-  padding-bottom: 14px
+  flex: 0 0 auto
+}
+
+.record-form-heading > div {
+  min-width: 0
+}
+
+.record-form-heading h2 {
+  overflow-wrap: anywhere
+}
+
+.record-form-modal > .record-form-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  align-content: start;
+  padding-right: 4px;
+  scrollbar-gutter: stable
 }
 
 @media(max-width:600px) {
