@@ -3131,7 +3131,10 @@ pre,
 }
 
 .portfolio-record-card {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 260px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
@@ -3178,7 +3181,12 @@ pre,
 
 .record-card-heading h3 {
   font: 700 13px var(--fontBrand);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow-wrap: anywhere;
+  overflow: hidden;
   margin: 1px 0 5px
 }
 
@@ -3186,7 +3194,12 @@ pre,
   font-size: 11px;
   line-height: 1.45;
   color: var(--muted);
-  margin: 0
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden
 }
 
 .record-card-description {
@@ -3195,9 +3208,11 @@ pre,
   line-height: 1.6;
   margin: 13px 0 9px;
   display: -webkit-box;
-  line-clamp: 4;
   -webkit-box-orient: vertical;
-  overflow: hidden
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+  min-height: 4.8em
 }
 
 .record-evidence {
@@ -3215,23 +3230,35 @@ pre,
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-2);
-  margin: 4px 0 0
+  margin: 4px 0 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  min-height: 4.5em
 }
 
 .record-tag-list {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  margin-top: 11px
+  margin-top: 11px;
+  max-height: 48px;
+  overflow: hidden
 }
 
 .record-tag-list span {
+  max-width: 100%;
   font: 10px var(--fontCode);
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 5px;
   padding: 4px 6px;
-  color: var(--text-2)
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap
 }
 
 .custom-field-display {
@@ -3240,7 +3267,15 @@ pre,
   gap: 5px;
   font-size: 11px;
   color: var(--text-2);
-  margin-top: 9px
+  margin-top: 9px;
+  max-height: 54px;
+  overflow: hidden
+}
+
+.custom-field-display span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap
 }
 
 .custom-field-display b {
@@ -3271,11 +3306,18 @@ pre,
   line-height: 1.5;
   color: var(--text-2);
   padding-left: 16px;
-  margin: 10px 0
+  margin: 10px 0;
+  max-height: 75px;
+  overflow: hidden
 }
 
 .record-achievements li {
-  margin: 4px 0
+  margin: 4px 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  overflow: hidden
 }
 
 .record-card-footer {
@@ -3284,8 +3326,8 @@ pre,
   justify-content: space-between;
   gap: 8px;
   border-top: 1px solid var(--border);
-  padding-top: 9px;
-  margin-top: 13px
+  margin-top: auto;
+  padding-top: 9px
 }
 
 .record-updated {
