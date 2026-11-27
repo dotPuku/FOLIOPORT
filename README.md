@@ -223,8 +223,31 @@ Or, after activating the virtual environment:
 python -m unittest discover -s tests
 ```
 
-The suite includes offline regression cases for public/private context handling, hostile prompt text, empty-field filtering, resume import flows, matching classifications, score behavior, and overlap-safe experience dates. The RAG evaluation fixture computes context precision and recall on fixed retrieval cases. These tests validate those fixtures and deterministic code paths; they do **not** establish live-model accuracy, production retrieval quality, or hiring validity.
-Current verification: **49 backend tests passed** and `npm run build` completed successfully. The fixed RAG fixtures assert at least 0.8 context precision and recall; these are fixture thresholds, not a production accuracy claim.
+The suite includes offline regression cases for public/private context handling, hostile prompt text, empty-field filtering, resume import flows, matching classifications, score behavior, and overlap-safe experience dates. RAG metric formulas and judge-output validation are also tested offline. These tests do **not** establish live-model accuracy or production retrieval quality.
+
+### Evaluate RAG with an imported resume
+
+For a meaningful, resume-specific score, import and save the resume records, make the records intended for public portfolio answers public, and ensure the Qdrant index is current. Create a JSON golden set whose relevant entity IDs point to the records expected for each question:
+
+```json
+[
+  {
+    "question": "Which project used Python?",
+    "reference_answer": "The candidate used Python on the inventory dashboard project.",
+    "relevant_entities": [
+      { "kind": "project", "id": "12" }
+    ]
+  }
+]
+```
+
+Run the evaluation from `backend` with the same database, Qdrant, and Groq configuration as the application:
+
+```powershell
+python -m scripts.evaluate_rag --dataset path\to\resume-rag-golden.json --k 4 --output rag-evaluation.json
+```
+
+The report includes entity-level Precision@k, Recall@k, MRR and nDCG@k; LLM-judged context precision and context recall over ranked Qdrant results; and faithfulness, answer relevance, and answer correctness. Faithfulness is judged against the complete context actually supplied to the answer generator, including database-backed context. The overall score is the unweighted macro-average of all reported metrics on a 0–1 scale (also shown as a percentage); treat it as a diagnostic summary, not a universal quality, hiring, or resume score. The evaluation calls the configured Groq model both to generate answers and to judge them, so resume-derived questions, references, and context are sent to that provider. No resume-specific score can be reported until an actual imported resume, matching golden set, and configured services are evaluated.
 
 Build the frontend from `frontend`:
 

@@ -19,19 +19,20 @@ _SECTION_PATTERNS = {
 }
 
 
-def _completion_messages(question, clean_messages):
-    retrieval_started = time.perf_counter()
-    try:
-        retrieved = retrieve(question, limit=8, public_only=True)
-    except Exception as exc:
-        current_app.logger.warning("Qdrant retrieval unavailable; using database context only: %s", exc)
-        retrieved = []
-    retrieved = [hit for hit in retrieved if hit.get("is_public")][:4]
-    current_app.logger.info(
-        "Chat retrieval completed in %.0fms with %d public records.",
-        (time.perf_counter() - retrieval_started) * 1000,
-        len(retrieved),
-    )
+def _completion_messages(question, clean_messages, retrieved_hits=None):
+    if retrieved_hits is None:
+        retrieval_started = time.perf_counter()
+        try:
+            retrieved_hits = retrieve(question, limit=8, public_only=True)
+        except Exception as exc:
+            current_app.logger.warning("Qdrant retrieval unavailable; using database context only: %s", exc)
+            retrieved_hits = []
+        current_app.logger.info(
+            "Chat retrieval completed in %.0fms with %d public records.",
+            (time.perf_counter() - retrieval_started) * 1000,
+            len(retrieved_hits),
+        )
+    retrieved = [hit for hit in retrieved_hits if hit.get("is_public")][:4]
     bundle = get_portfolio_bundle(public_only=True)
     context = _public_context(bundle, retrieved, question)
     question = clean_messages[-1]["content"]

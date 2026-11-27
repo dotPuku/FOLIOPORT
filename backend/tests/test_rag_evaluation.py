@@ -1,3 +1,4 @@
+import math
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -5,6 +6,7 @@ from unittest.mock import Mock, patch
 from flask import Flask
 
 from app.services.rag import retrieve, retrieve_many
+from app.services.rag_evaluation import judge_answer, retrieval_metrics
 
 
 class RAGEvaluationTests(unittest.TestCase):
@@ -81,7 +83,7 @@ class RAGEvaluationTests(unittest.TestCase):
             [[0.0, 0.2], [1.0, 0.2]],
         )
 
-    def test_golden_queries_meet_context_precision_and_recall_targets(self):
+    def test_golden_queries_compute_entity_level_retrieval_metrics(self):
         class FakeVector:
             def tolist(self):
                 return [0.1, 0.2]
@@ -138,14 +140,51 @@ class RAGEvaluationTests(unittest.TestCase):
             for case in cases:
                 with self.subTest(query=case["query"]):
                     hits = retrieve(case["query"], limit=2, public_only=True)
-                    actual = {(hit["kind"], str(hit["entity_id"])) for hit in hits}
-                    relevant = case["relevant"]
-                    true_positives = len(actual & relevant)
-                    precision = true_positives / len(actual) if actual else 0
-                    recall = true_positives / len(relevant)
+                    scores = retrieval_metrics(
+                        hits,
+                        [{"kind": kind, "id": entity_id} for kind, entity_id in case["relevant"]],
+                        2,
+                    )
 
-                    self.assertGreaterEqual(precision, 0.8)
-                    self.assertGreaterEqual(recall, 0.8)
+                    self.assertEqual(scores["precision_at_2"], 1.0 if case["query"].startswith("Which") else 0.5)
+                    self.assertEqual(scores["recall_at_2"], 1.0)
+                    self.assertEqual(scores["mrr"], 1.0)
+                    self.assertEqual(scores["ndcg_at_2"], 1.0)
+
+    def test_retrieval_metrics_reflect_rank_and_fixed_cutoff(self):
+        scores = retrieval_metrics(
+            [
+                {"kind": "project", "entity_id": "unrelated"},
+                {"kind": "project", "entity_id": "relevant"},
+            ],
+            [{"kind": "project", "id": "relevant"}, {"kind": "skill", "id": "missing"}],
+            3,
+        )
+
+        self.assertAlmostEqual(scores["precision_at_3"], 1 / 3)
+        self.assertEqual(scores["recall_at_3"], 0.5)
+        self.assertEqual(scores["mrr"], 0.5)
+        rank_two_gain = 1 / math.log2(3)
+        self.assertAlmostEqual(scores["ndcg_at_3"], rank_two_gain / (1 + rank_two_gain))
+
+    def test_judge_requires_all_bounded_metric_scores(self):
+        valid_scores = {
+            "context_precision": 0.8,
+            "context_recall": 0.75,
+            "faithfulness": 1,
+            "answer_relevance": 0.9,
+            "answer_correctness": 0.8,
+        }
+        with patch("app.services.rag_evaluation.json_completion", return_value=valid_scores):
+            scores = judge_answer("question", "reference", "retrieved", "full context", "answer")
+        self.assertEqual(scores["faithfulness"], 1.0)
+
+        with patch(
+            "app.services.rag_evaluation.json_completion",
+            return_value={**valid_scores, "faithfulness": 1.1},
+        ):
+            with self.assertRaisesRegex(ValueError, "faithfulness"):
+                judge_answer("question", "reference", "retrieved", "full context", "answer")
 
 
 if __name__ == "__main__":
